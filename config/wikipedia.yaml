@@ -28,6 +28,7 @@ pipeline:
         }
     - mapping: |
         root = if this.wiki == "enwiki" &&
+          this.meta.domain != "canary" &&
           this.namespace == 0 &&
           ["edit", "new"].contains(this.type) &&
           this.revision.new != null {
@@ -81,6 +82,7 @@ output:
       updated_at:
         type: datetime
     max_in_flight: 4
+    newer_than: revision_id
     batching:
       count: 100
       period: 1s

@@ -24,6 +24,7 @@ const (
 	fieldDisableBackpressure = "disable_backpressure"
 	fieldMaxInFlight         = "max_in_flight"
 	fieldNamespace           = "namespace"
+	fieldNewerThan           = "newer_than"
 	fieldRegion              = "region"
 	fieldSchema              = "schema"
 	fieldTimeout             = "timeout"
@@ -59,6 +60,9 @@ func turbopufferSpec() *service.ConfigSpec {
 			service.NewBoolField(fieldDisableBackpressure).
 				Description("Bypass indexing-backlog write protection for controlled bulk loads.").
 				Default(false),
+			service.NewStringField(fieldNewerThan).
+				Description("Only replace an existing document when this attribute is smaller in the stored document.").
+				Default(""),
 			service.NewDurationField(fieldTimeout).
 				Description("The timeout for each turbopuffer write request.").
 				Default("60s"),
@@ -123,6 +127,13 @@ func newTurbopufferOutput(conf *service.ParsedConfig, _ *service.Resources) (ser
 	if err != nil {
 		return nil, policy, 0, err
 	}
+	newerThan, err := conf.FieldString(fieldNewerThan)
+	if err != nil {
+		return nil, policy, 0, err
+	}
+	if disableBackpressure && newerThan != "" {
+		return nil, policy, 0, errors.New("newer_than cannot be combined with disable_backpressure")
+	}
 
 	timeout, err := conf.FieldDuration(fieldTimeout)
 	if err != nil {
@@ -143,6 +154,7 @@ func newTurbopufferOutput(conf *service.ParsedConfig, _ *service.Resources) (ser
 		apiKey:              apiKey,
 		disableBackpressure: disableBackpressure,
 		endpoint:            baseURL + "/v2/namespaces/" + url.PathEscape(namespace),
+		newerThan:           newerThan,
 		schema:              schema,
 		httpClient:          &http.Client{Timeout: timeout},
 	}, policy, maxInFlight, nil
@@ -166,6 +178,7 @@ type turbopufferOutput struct {
 	apiKey              string
 	disableBackpressure bool
 	endpoint            string
+	newerThan           string
 	schema              map[string]any
 	httpClient          *http.Client
 }
@@ -185,12 +198,20 @@ func (t *turbopufferOutput) WriteBatch(ctx context.Context, messages service.Mes
 
 	payload := struct {
 		UpsertRows          []map[string]any `json:"upsert_rows"`
+		UpsertCondition     any              `json:"upsert_condition,omitempty"`
 		Schema              map[string]any   `json:"schema,omitempty"`
 		DisableBackpressure bool             `json:"disable_backpressure,omitempty"`
 	}{
 		UpsertRows:          rows,
 		Schema:              t.schema,
 		DisableBackpressure: t.disableBackpressure,
+	}
+	if t.newerThan != "" {
+		payload.UpsertCondition = []any{
+			t.newerThan,
+			"Lt",
+			map[string]any{"$ref_new": t.newerThan},
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

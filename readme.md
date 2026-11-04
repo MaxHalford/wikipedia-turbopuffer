@@ -18,8 +18,9 @@ GET /w/rest.php/v1/search/page?q=solar&limit=5
 
 ## Run locally
 
-You need Go 1.27.3, one read-only turbopuffer key, one write-only key, and a
-descriptive Wikimedia user agent with a monitored contact address.
+You need Go 1.27.3, one read-only turbopuffer key, one ingestion key with query
+and write access, and a descriptive Wikimedia user agent with a monitored
+contact address.
 
 Create an ignored `.env` file:
 
@@ -29,6 +30,8 @@ TURBOPUFFER_WRITE_API_KEY=tpuf_...
 TURBOPUFFER_REGION=gcp-us-central1
 TURBOPUFFER_NAMESPACE=wikipedia-en-live
 WIKIMEDIA_USER_AGENT=wikipedia-turbopuffer/0.1 (mailto:you@example.com)
+WIKIPEDIA_CATCHUP_START=2026-11-01T00:00:00Z
+WIKIPEDIA_CATCHUP_INTERVAL=5m
 ```
 
 Start the live ingester:
@@ -78,7 +81,10 @@ TURBOPUFFER_API_KEY="$TURBOPUFFER_WRITE_API_KEY" \
 ```
 
 The reconciliation reads MediaWiki recent changes, fetches the current Cirrus
-documents in batches, and repairs edited, moved, and deleted pages.
+documents in batches, and repairs edited, moved, and deleted pages. The live
+service runs the same reconciliation every five minutes. It stores the end of
+each completed window in turbopuffer, so a restart resumes from the last
+committed watermark and a failed run repeats its window.
 
 ## Deploy to Cloud Run
 
@@ -95,8 +101,9 @@ gcloud builds submit . \
   --substitutions=_TAG="$(git rev-parse HEAD)"
 ```
 
-Create the query and write secrets before applying Terraform. Configure the GCS
-backend explicitly so state is not stored in the repository:
+Create the website query secret and the ingester query/write secret before
+applying Terraform. Configure the GCS backend explicitly so state is not stored
+in the repository:
 
 ```bash
 terraform -chdir=terraform init \
@@ -142,11 +149,8 @@ turbopuffer write against local HTTP servers.
 
 ## Limits
 
-- Wikimedia's direct event stream has no durable replay cursor. An outage can
-  lose events unless Kafka or Redpanda stores the stream first.
-- The live pipeline handles article creates and edits. The reconciliation job
-  repairs deletes and moves during a dump cutover.
-- The live pipeline does not apply deletes and moves immediately after cutover.
+- The index follows article revisions, moves, and deletes. It does not expand a
+  template edit into updates for every article that transcludes that template.
 - The API returns `null` descriptions and thumbnails because the index does not
   store them.
 - A useful initial search index requires the separate multi-shard backfill.

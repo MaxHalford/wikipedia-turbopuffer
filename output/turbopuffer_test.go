@@ -109,6 +109,7 @@ func TestTurbopufferOutputConfiguration(t *testing.T) {
 api_key: tpuf_test
 base_url: http://localhost:9999/
 namespace: wikipedia-en
+newer_than: revision_id
 schema:
   text:
     type: string
@@ -125,6 +126,21 @@ batching:
 	require.Equal(t, "http://localhost:9999/v2/namespaces/wikipedia-en", output.endpoint)
 	require.Equal(t, map[string]any{"text": map[string]any{"type": "string"}}, output.schema)
 	require.False(t, output.disableBackpressure)
+	require.Equal(t, "revision_id", output.newerThan)
+}
+
+func TestTurbopufferOutputRejectsNewerThanWithDisabledBackpressure(t *testing.T) {
+	parsed, err := turbopufferSpec().ParseYAML(`
+api_key: tpuf_test
+namespace: wikipedia-en
+disable_backpressure: true
+newer_than: revision_id
+batching: {}
+`, nil)
+	require.NoError(t, err)
+
+	_, _, _, err = newTurbopufferOutput(parsed, nil)
+	require.ErrorContains(t, err, "newer_than cannot be combined with disable_backpressure")
 }
 
 func TestTurbopufferOutputRejectsInvalidConfiguration(t *testing.T) {
