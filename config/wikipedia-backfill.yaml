@@ -32,7 +32,7 @@ pipeline:
           deleted()
         }
     - mapping: |
-        root.id = this.page_id.string()
+        root.id = "%v".format(this.page_id)
         root.title = this.title
         root.text = this.text
         root.url = "https://en.wikipedia.org/wiki/" + this.title.replace_all(" ", "_").escape_url_path()
