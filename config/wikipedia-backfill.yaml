@@ -68,7 +68,7 @@ output:
         type: int
       updated_at:
         type: datetime
-    max_in_flight: 1
+    max_in_flight: ${TURBOPUFFER_MAX_IN_FLIGHT:1}
     batching:
       count: 50
       byte_size: 2097152
