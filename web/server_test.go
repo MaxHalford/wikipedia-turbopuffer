@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -57,6 +59,7 @@ func TestServerSearchAPIAndPage(t *testing.T) {
 	require.Contains(t, response.Body.String(), "page changes")
 	require.Equal(t, 1, strings.Count(response.Body.String(), "last 1h"))
 	require.Contains(t, response.Body.String(), "p99 ingestion")
+	require.Contains(t, response.Body.String(), "live ingestion stalled")
 	require.NotContains(t, response.Body.String(), `aria-label="Search"`)
 	require.Contains(t, response.Body.String(), "setInterval(refreshStats,10000)")
 	require.Contains(t, response.Body.String(), "const searchDebounceMS=150")
@@ -75,6 +78,7 @@ func TestServerSearchAPIAndPage(t *testing.T) {
 }
 
 func TestServerStatsAPI(t *testing.T) {
+	liveIngestAt := time.Now().UTC()
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(request.URL.Path, "/metadata") {
@@ -87,7 +91,7 @@ func TestServerStatsAPI(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"aggregations":{"pages":1500}}`))
 			return
 		}
-		_, _ = writer.Write([]byte(`{"rows":[{"source_event_at":"2026-11-04T16:29:54Z","ingested_at":"2026-11-04T16:29:56Z"}]}`))
+		_, _ = fmt.Fprintf(writer, `{"rows":[{"source_event_at":%q,"ingested_at":%q}]}`, liveIngestAt.Add(-2*time.Second).Format(time.RFC3339Nano), liveIngestAt.Format(time.RFC3339Nano))
 	}))
 	defer upstream.Close()
 	client, err := NewSearchClient("tpuf_test", "", upstream.URL, "wikipedia-test")
@@ -100,7 +104,18 @@ func TestServerStatsAPI(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "public, max-age=10, stale-while-revalidate=20", response.Header().Get("Cache-Control"))
-	require.JSONEq(t, `{"documents":7257731,"pages_edited_last_hour":1500,"index_status":"up-to-date","last_write_at":"2026-11-04T16:29:52Z","p99_ingest_latency_ms":2000,"latency_sample_count":1}`, response.Body.String())
+	var stats Stats
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &stats))
+	require.Less(t, stats.LiveIngestLagMS, int64(2000))
+	stats.LiveIngestLagMS = 0
+	require.Equal(t, Stats{
+		Documents:           7257731,
+		PagesEditedLastHour: 1500,
+		IndexStatus:         "up-to-date",
+		LastWriteAt:         "2026-11-04T16:29:52Z",
+		P99IngestLatencyMS:  2000,
+		LatencySampleCount:  1,
+	}, stats)
 }
 
 func TestServerRejectsInvalidQuery(t *testing.T) {
