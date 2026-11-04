@@ -68,7 +68,7 @@ func TestWikipediaPipeline(t *testing.T) {
 		}
 		require.Equal(t, "/page/Test%20Article/with_html", request.URL.EscapedPath())
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(writer, `{"id":11250397,"key":"Test_Article","title":"Test Article","latest":{"id":12,"timestamp":"2026-11-04T10:00:00Z"},"html":"<h1>Test Article</h1><p>Hello <strong>world</strong>.</p>"}`)
+		_, _ = fmt.Fprint(writer, `{"id":11250397,"key":"Test_Article","title":"Test Article","latest":{"id":12,"timestamp":"2026-11-04T10:00:00Z"},"html":"<h1>Test Article</h1><section data-mw-section-id=\"0\"><p>Hello <strong>world</strong>.</p></section><section data-mw-section-id=\"1\"><p>Body copy.</p></section>"}`)
 	}))
 	defer pageServer.Close()
 
@@ -115,11 +115,11 @@ func TestWikipediaPipeline(t *testing.T) {
 		require.WithinDuration(t, time.Now(), parsed, 5*time.Second)
 		delete(row, "ingested_at")
 		require.Equal(t, map[string]any{
-			"embedding_text":  "Test Article\n\nTest Article Hello world.",
+			"embedding_text":  "Test Article\n\nHello world.",
 			"id":              "11250397",
 			"source_event_at": "2026-11-04T10:00:01Z",
 			"revision_id":     float64(12),
-			"text":            "Test Article Hello world.",
+			"text":            "Test Article Hello world. Body copy.",
 			"title":           "Test Article",
 			"updated_at":      "2026-11-04T10:00:00Z",
 			"url":             "https://en.wikipedia.org/wiki/Test_Article",

@@ -28,6 +28,7 @@ type Stats struct {
 	PagesEditedLastHour uint64 `json:"pages_edited_last_hour"`
 	IndexStatus         string `json:"index_status"`
 	LastWriteAt         string `json:"last_write_at"`
+	LiveIngestLagMS     int64  `json:"live_ingest_lag_ms"`
 	P99IngestLatencyMS  int64  `json:"p99_ingest_latency_ms"`
 	LatencySampleCount  int    `json:"latency_sample_count"`
 }
@@ -184,9 +185,13 @@ func (c *SearchClient) Stats(ctx context.Context, now time.Time) (Stats, error) 
 		return Stats{}, fmt.Errorf("decode turbopuffer latency: %w", err)
 	}
 	latencies := make([]int64, 0, len(latencyResponse.Rows))
+	var lastLiveIngest time.Time
 	for _, row := range latencyResponse.Rows {
 		sourceEventAt, sourceErr := time.Parse(time.RFC3339Nano, row.SourceEventAt)
 		ingestedAt, ingestErr := time.Parse(time.RFC3339Nano, row.IngestedAt)
+		if ingestErr == nil && ingestedAt.After(lastLiveIngest) {
+			lastLiveIngest = ingestedAt
+		}
 		if sourceErr != nil || ingestErr != nil || ingestedAt.Before(sourceEventAt) {
 			continue
 		}
@@ -198,11 +203,16 @@ func (c *SearchClient) Stats(ctx context.Context, now time.Time) (Stats, error) 
 		rank := (99*len(latencies) + 99) / 100
 		p99Latency = latencies[rank-1]
 	}
+	liveIngestLag := int64(-1)
+	if !lastLiveIngest.IsZero() {
+		liveIngestLag = max(now.Sub(lastLiveIngest).Milliseconds(), 0)
+	}
 	return Stats{
 		Documents:           metadata.ApproxRowCount,
 		PagesEditedLastHour: aggregation.Aggregations.Pages,
 		IndexStatus:         metadata.Index.Status,
 		LastWriteAt:         metadata.LastWriteAt,
+		LiveIngestLagMS:     liveIngestLag,
 		P99IngestLatencyMS:  p99Latency,
 		LatencySampleCount:  len(latencies),
 	}, nil
