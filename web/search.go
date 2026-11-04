@@ -7,27 +7,39 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
 
 type SearchClient struct {
-	apiKey     string
-	endpoint   string
-	httpClient *http.Client
+	apiKey           string
+	endpoint         string
+	metadataEndpoint string
+	httpClient       *http.Client
+}
+
+type Stats struct {
+	Documents           uint64 `json:"documents"`
+	PagesEditedLastHour uint64 `json:"pages_edited_last_hour"`
+	IndexStatus         string `json:"index_status"`
+	LastWriteAt         string `json:"last_write_at"`
+	P99IngestLatencyMS  int64  `json:"p99_ingest_latency_ms"`
+	LatencySampleCount  int    `json:"latency_sample_count"`
 }
 
 type Result struct {
-	ID          any     `json:"id"`
-	Title       string  `json:"title"`
-	URL         string  `json:"url"`
-	Excerpt     string  `json:"excerpt"`
-	ExcerptHTML string  `json:"-"`
-	UpdatedAt   string  `json:"updated_at"`
-	Score       float64 `json:"score"`
+	ID          any           `json:"id"`
+	Title       string        `json:"title"`
+	URL         string        `json:"url"`
+	Excerpt     string        `json:"excerpt"`
+	ExcerptHTML template.HTML `json:"excerpt_html"`
+	UpdatedAt   string        `json:"updated_at"`
+	Score       float64       `json:"score"`
 }
 
 type SearchResponse struct {
@@ -52,12 +64,139 @@ func NewSearchClient(apiKey, region, baseURL, namespace string) (*SearchClient, 
 	if namespace == "" {
 		return nil, errors.New("TURBOPUFFER_NAMESPACE must not be empty")
 	}
+	namespaceEndpoint := strings.TrimRight(baseURL, "/") + "/v2/namespaces/" + url.PathEscape(namespace)
 	return &SearchClient{
-		apiKey:   apiKey,
-		endpoint: strings.TrimRight(baseURL, "/") + "/v2/namespaces/" + url.PathEscape(namespace) + "/query",
+		apiKey:           apiKey,
+		endpoint:         namespaceEndpoint + "/query",
+		metadataEndpoint: namespaceEndpoint + "/metadata",
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+	}, nil
+}
+
+func (c *SearchClient) Stats(ctx context.Context, now time.Time) (Stats, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.metadataEndpoint, nil)
+	if err != nil {
+		return Stats{}, fmt.Errorf("create metadata request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return Stats{}, fmt.Errorf("get turbopuffer metadata: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 16<<10))
+		return Stats{}, fmt.Errorf("turbopuffer returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+	}
+	var metadata struct {
+		ApproxRowCount uint64 `json:"approx_row_count"`
+		LastWriteAt    string `json:"last_write_at"`
+		Index          struct {
+			Status string `json:"status"`
+		} `json:"index"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&metadata); err != nil {
+		return Stats{}, fmt.Errorf("decode turbopuffer metadata: %w", err)
+	}
+
+	payload := map[string]any{
+		"aggregate_by": map[string]any{"pages": []any{"Count"}},
+		"filters": []any{
+			"updated_at",
+			"Gte",
+			now.Add(-time.Hour).UTC().Format(time.RFC3339),
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return Stats{}, fmt.Errorf("marshal stats query: %w", err)
+	}
+	request, err = http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return Stats{}, fmt.Errorf("create stats query: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = c.httpClient.Do(request)
+	if err != nil {
+		return Stats{}, fmt.Errorf("query turbopuffer stats: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 16<<10))
+		return Stats{}, fmt.Errorf("turbopuffer returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+	}
+	var aggregation struct {
+		Aggregations struct {
+			Pages uint64 `json:"pages"`
+		} `json:"aggregations"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&aggregation); err != nil {
+		return Stats{}, fmt.Errorf("decode turbopuffer stats: %w", err)
+	}
+
+	payload = map[string]any{
+		"rank_by": []any{
+			"Dist",
+			[]any{"Attribute", "ingested_at"},
+			now.UTC().Format(time.RFC3339),
+		},
+		"top_k":              10_000,
+		"filters":            []any{"ingested_at", "Gte", now.Add(-time.Hour).UTC().Format(time.RFC3339)},
+		"include_attributes": []string{"source_event_at", "ingested_at"},
+	}
+	body, err = json.Marshal(payload)
+	if err != nil {
+		return Stats{}, fmt.Errorf("marshal latency query: %w", err)
+	}
+	request, err = http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return Stats{}, fmt.Errorf("create latency query: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = c.httpClient.Do(request)
+	if err != nil {
+		return Stats{}, fmt.Errorf("query turbopuffer latency: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 16<<10))
+		return Stats{}, fmt.Errorf("turbopuffer returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+	}
+	var latencyResponse struct {
+		Rows []struct {
+			SourceEventAt string `json:"source_event_at"`
+			IngestedAt    string `json:"ingested_at"`
+		} `json:"rows"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&latencyResponse); err != nil {
+		return Stats{}, fmt.Errorf("decode turbopuffer latency: %w", err)
+	}
+	latencies := make([]int64, 0, len(latencyResponse.Rows))
+	for _, row := range latencyResponse.Rows {
+		sourceEventAt, sourceErr := time.Parse(time.RFC3339Nano, row.SourceEventAt)
+		ingestedAt, ingestErr := time.Parse(time.RFC3339Nano, row.IngestedAt)
+		if sourceErr != nil || ingestErr != nil || ingestedAt.Before(sourceEventAt) {
+			continue
+		}
+		latencies = append(latencies, ingestedAt.Sub(sourceEventAt).Milliseconds())
+	}
+	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	p99Latency := int64(0)
+	if len(latencies) > 0 {
+		rank := (99*len(latencies) + 99) / 100
+		p99Latency = latencies[rank-1]
+	}
+	return Stats{
+		Documents:           metadata.ApproxRowCount,
+		PagesEditedLastHour: aggregation.Aggregations.Pages,
+		IndexStatus:         metadata.Index.Status,
+		LastWriteAt:         metadata.LastWriteAt,
+		P99IngestLatencyMS:  p99Latency,
+		LatencySampleCount:  len(latencies),
 	}, nil
 }
 
@@ -135,7 +274,7 @@ func (c *SearchClient) query(ctx context.Context, payload map[string]any) ([]Res
 	}
 	results := make([]Result, 0, len(decoded.Rows))
 	for _, row := range decoded.Rows {
-		excerpt, excerptHTML := "", ""
+		excerpt, excerptHTML := "", template.HTML("")
 		if len(row.Excerpt) > 0 {
 			excerpt = strings.Join(strings.Fields(row.Excerpt[0].Text), " ")
 			excerptHTML = highlightExcerpt(
@@ -157,9 +296,9 @@ func (c *SearchClient) query(ctx context.Context, payload map[string]any) ([]Res
 	return results, nil
 }
 
-func highlightExcerpt(text string, fragmentRange []int, matchRanges [][]int) string {
+func highlightExcerpt(text string, fragmentRange []int, matchRanges [][]int) template.HTML {
 	if len(matchRanges) == 0 {
-		return html.EscapeString(strings.Join(strings.Fields(text), " "))
+		return template.HTML(html.EscapeString(strings.Join(strings.Fields(text), " ")))
 	}
 	base := 0
 	if len(fragmentRange) == 2 {
@@ -182,5 +321,5 @@ func highlightExcerpt(text string, fragmentRange []int, matchRanges [][]int) str
 		cursor = end
 	}
 	excerpt.WriteString(html.EscapeString(text[cursor:]))
-	return strings.TrimSpace(excerpt.String())
+	return template.HTML(strings.TrimSpace(excerpt.String()))
 }

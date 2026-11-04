@@ -19,7 +19,7 @@ func TestWikipediaPipeline(t *testing.T) {
 	streamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"canary\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Canary\",\"revision\":{\"new\":11}}\n\n")
-		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:01Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
 		writer.(http.Flusher).Flush()
 	}))
 	defer streamServer.Close()
@@ -70,14 +70,22 @@ func TestWikipediaPipeline(t *testing.T) {
 	select {
 	case body := <-writes:
 		rows := body["upsert_rows"].([]any)
+		row := rows[0].(map[string]any)
+		ingestedAt, ok := row["ingested_at"].(string)
+		require.True(t, ok)
+		parsed, err := time.Parse(time.RFC3339Nano, ingestedAt)
+		require.NoError(t, err)
+		require.WithinDuration(t, time.Now(), parsed, 5*time.Second)
+		delete(row, "ingested_at")
 		require.Equal(t, map[string]any{
-			"id":          "11250397",
-			"revision_id": float64(12),
-			"text":        "Test Article Hello world.",
-			"title":       "Test Article",
-			"updated_at":  "2026-11-04T10:00:00Z",
-			"url":         "https://en.wikipedia.org/wiki/Test_Article",
-		}, rows[0])
+			"id":              "11250397",
+			"source_event_at": "2026-11-04T10:00:01Z",
+			"revision_id":     float64(12),
+			"text":            "Test Article Hello world.",
+			"title":           "Test Article",
+			"updated_at":      "2026-11-04T10:00:00Z",
+			"url":             "https://en.wikipedia.org/wiki/Test_Article",
+		}, row)
 		require.Equal(t, []any{
 			"revision_id",
 			"Lt",
@@ -166,13 +174,33 @@ func TestCollectRecentPageIDsUsesClosedWindow(t *testing.T) {
 	defer server.Close()
 
 	config := &catchupConfig{
-		apiURL:     server.URL,
-		start:      "2026-11-04T10:00:00Z",
-		end:        "2026-11-04T10:05:00Z",
-		userAgent:  "test/0.1",
-		httpClient: server.Client(),
+		apiURL:      server.URL,
+		start:       "2026-11-04T10:00:00Z",
+		end:         "2026-11-04T10:05:00Z",
+		userAgent:   "test/0.1",
+		httpClient:  server.Client(),
+		requestGate: &requestGate{},
 	}
 	require.NoError(t, collectRecentPageIDs(t.Context(), config, map[uint64]struct{}{}, true))
+}
+
+func TestRetryDelayHonorsRetryAfter(t *testing.T) {
+	now := time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC)
+
+	require.Equal(t, 30*time.Second, retryDelay(0, "30", now))
+	require.Equal(t, 45*time.Second, retryDelay(1, now.Add(45*time.Second).Format(http.TimeFormat), now))
+	require.Equal(t, 4*time.Second, retryDelay(2, "invalid", now))
+}
+
+func TestWikipediaRequestGateRespectsCancellation(t *testing.T) {
+	gate := &requestGate{
+		interval: time.Second,
+		next:     time.Now().Add(time.Hour),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.ErrorIs(t, gate.Wait(ctx), context.Canceled)
 }
 
 func TestWriteCatchupRowsUsesRevisionGuards(t *testing.T) {

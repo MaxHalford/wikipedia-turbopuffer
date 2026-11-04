@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,9 @@ type Server struct {
 	logger      *slog.Logger
 	page        *template.Template
 	searchSlots chan struct{}
+	statsMu     sync.Mutex
+	stats       Stats
+	statsUntil  time.Time
 }
 
 type pageData struct {
@@ -46,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handlePage)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /w/rest.php/v1/search/title", s.handleWikipediaTitleSearch)
 	mux.HandleFunc("GET /w/rest.php/v1/search/page", s.handleWikipediaPageSearch)
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
@@ -53,6 +58,24 @@ func (s *Server) Handler() http.Handler {
 		_, _ = writer.Write([]byte("ok\n"))
 	})
 	return securityHeaders(mux)
+}
+
+func (s *Server) handleStats(writer http.ResponseWriter, request *http.Request) {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	now := time.Now()
+	if !now.Before(s.statsUntil) {
+		stats, err := s.client.Stats(request.Context(), now)
+		if err != nil {
+			s.logger.Error("load health stats", "error", err)
+			writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "stats are temporarily unavailable"})
+			return
+		}
+		s.stats = stats
+		s.statsUntil = now.Add(10 * time.Second)
+	}
+	writer.Header().Set("Cache-Control", "public, max-age=10, stale-while-revalidate=20")
+	writeJSON(writer, http.StatusOK, s.stats)
 }
 
 type wikipediaSearchResponse struct {
@@ -114,7 +137,7 @@ func (s *Server) handleWikipediaSearch(writer http.ResponseWriter, request *http
 
 	pages := make([]wikipediaPage, 0, len(results))
 	for _, result := range results {
-		excerpt := result.ExcerptHTML
+		excerpt := string(result.ExcerptHTML)
 		if titlesOnly {
 			excerpt = template.HTMLEscapeString(result.Title)
 		}

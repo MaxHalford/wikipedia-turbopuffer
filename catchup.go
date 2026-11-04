@@ -20,9 +20,33 @@ import (
 )
 
 const (
-	catchupBatchSize   = 50
-	catchupWatermarkID = "__wikipedia_catchup_watermark__"
+	catchupBatchSize         = 50
+	catchupWatermarkID       = "__wikipedia_catchup_watermark__"
+	wikipediaRequestInterval = time.Second
 )
+
+type requestGate struct {
+	mu       sync.Mutex
+	next     time.Time
+	interval time.Duration
+}
+
+func (gate *requestGate) Wait(ctx context.Context) error {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+
+	if delay := time.Until(gate.next); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	gate.next = time.Now().Add(gate.interval)
+	return nil
+}
 
 type catchupConfig struct {
 	apiKey      string
@@ -35,6 +59,7 @@ type catchupConfig struct {
 	workers     int
 	httpClient  *http.Client
 	writeClient *http.Client
+	requestGate *requestGate
 }
 
 type recentChangesResponse struct {
@@ -157,6 +182,7 @@ func catchupConfigFromEnv() (*catchupConfig, error) {
 		workers:     4,
 		httpClient:  &http.Client{Timeout: 2 * time.Minute},
 		writeClient: &http.Client{Timeout: time.Minute},
+		requestGate: &requestGate{interval: wikipediaRequestInterval},
 	}
 	if config.baseURL == "" {
 		region := getenv("TURBOPUFFER_REGION", "gcp-us-central1")
@@ -340,6 +366,9 @@ func catchupRows(requested []uint64, response cirrusResponse) ([]map[string]any,
 }
 
 func getWikipediaJSON(ctx context.Context, config *catchupConfig, parameters url.Values, destination any) error {
+	if err := config.requestGate.Wait(ctx); err != nil {
+		return err
+	}
 	endpoint := config.apiURL + "?" + parameters.Encode()
 	return retryJSON(ctx, config.httpClient, http.MethodGet, endpoint, config.userAgent, "", nil, destination)
 }
@@ -416,6 +445,7 @@ func writeCatchupWatermark(ctx context.Context, config *catchupConfig, watermark
 func retryJSON(ctx context.Context, client *http.Client, method, endpoint, userAgent, apiKey string, body []byte, destination any) error {
 	var lastError error
 	for attempt := range 6 {
+		retryAfter := ""
 		request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return err
@@ -429,6 +459,7 @@ func retryJSON(ctx context.Context, client *http.Client, method, endpoint, userA
 		}
 		response, err := client.Do(request)
 		if err == nil {
+			retryAfter = response.Header.Get("Retry-After")
 			responseBody, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
 			if readErr != nil {
@@ -450,12 +481,24 @@ func retryJSON(ctx context.Context, client *http.Client, method, endpoint, userA
 		}
 		lastError = err
 		if attempt < 5 {
+			delay := retryDelay(attempt, retryAfter, time.Now())
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(time.Duration(1<<attempt) * time.Second):
+			case <-time.After(delay):
 			}
 		}
 	}
 	return lastError
+}
+
+func retryDelay(attempt int, retryAfter string, now time.Time) time.Duration {
+	delay := time.Duration(1<<attempt) * time.Second
+	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds >= 0 {
+		return max(delay, time.Duration(seconds)*time.Second)
+	}
+	if timestamp, err := http.ParseTime(retryAfter); err == nil {
+		return max(delay, timestamp.Sub(now))
+	}
+	return delay
 }

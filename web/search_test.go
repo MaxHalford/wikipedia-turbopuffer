@@ -2,9 +2,11 @@ package web
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +33,7 @@ func TestSearchClient(t *testing.T) {
 		Title:       "Pufferfish",
 		URL:         "https://en.wikipedia.org/wiki/Pufferfish",
 		Excerpt:     "Pufferfish are toxic fish.",
-		ExcerptHTML: `<span class="searchmatch">Pufferfish</span> are toxic fish.`,
+		ExcerptHTML: template.HTML(`<span class="searchmatch">Pufferfish</span> are toxic fish.`),
 		UpdatedAt:   "2026-11-04T10:00:00Z",
 		Score:       1.25,
 	}}, results)
@@ -71,7 +73,7 @@ func TestSearchClientEscapesHighlightHTML(t *testing.T) {
 	results, err := client.Search(t.Context(), "fish", 1)
 	require.NoError(t, err)
 	require.Equal(t, "<b>fish</b>", results[0].Excerpt)
-	require.Equal(t, `&lt;b&gt;<span class="searchmatch">fish</span>&lt;/b&gt;`, results[0].ExcerptHTML)
+	require.Equal(t, template.HTML(`&lt;b&gt;<span class="searchmatch">fish</span>&lt;/b&gt;`), results[0].ExcerptHTML)
 }
 
 func TestSearchClientReportsAPIErrors(t *testing.T) {
@@ -84,6 +86,53 @@ func TestSearchClientReportsAPIErrors(t *testing.T) {
 
 	_, err = client.Search(t.Context(), "puffer", 12)
 	require.ErrorContains(t, err, "409 Conflict: not ready")
+}
+
+func TestSearchClientStats(t *testing.T) {
+	now := time.Date(2026, 11, 4, 16, 30, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "Bearer tpuf_test", request.Header.Get("Authorization"))
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v2/namespaces/wikipedia-test/metadata":
+			require.Equal(t, http.MethodGet, request.Method)
+			_, _ = writer.Write([]byte(`{"approx_row_count":7257731,"approx_logical_bytes":34051676253,"last_write_at":"2026-11-04T16:29:52Z","index":{"status":"up-to-date"}}`))
+		case "/v2/namespaces/wikipedia-test/query":
+			require.Equal(t, http.MethodPost, request.Method)
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+			if aggregate, ok := body["aggregate_by"]; ok {
+				require.Equal(t, map[string]any{"pages": []any{"Count"}}, aggregate)
+				require.Equal(t, []any{"updated_at", "Gte", "2026-11-04T15:30:00Z"}, body["filters"])
+				_, _ = writer.Write([]byte(`{"aggregations":{"pages":1500}}`))
+				return
+			}
+			require.Equal(t, []any{"ingested_at", "Gte", "2026-11-04T15:30:00Z"}, body["filters"])
+			require.Equal(t, float64(10000), body["top_k"])
+			_, _ = writer.Write([]byte(`{"rows":[
+				{"source_event_at":"2026-11-04T16:29:55Z","ingested_at":"2026-11-04T16:29:56Z"},
+				{"source_event_at":"2026-11-04T16:29:54Z","ingested_at":"2026-11-04T16:29:56Z"},
+				{"source_event_at":"2026-11-04T16:29:53Z","ingested_at":"2026-11-04T16:29:56Z"},
+				{"source_event_at":"2026-11-04T16:29:52Z","ingested_at":"2026-11-04T16:29:56Z"}
+			]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	client, err := NewSearchClient("tpuf_test", "", server.URL, "wikipedia-test")
+	require.NoError(t, err)
+
+	stats, err := client.Stats(t.Context(), now)
+	require.NoError(t, err)
+	require.Equal(t, Stats{
+		Documents:           7257731,
+		PagesEditedLastHour: 1500,
+		IndexStatus:         "up-to-date",
+		LastWriteAt:         "2026-11-04T16:29:52Z",
+		P99IngestLatencyMS:  4000,
+		LatencySampleCount:  4,
+	}, stats)
 }
 
 func TestNewSearchClientValidation(t *testing.T) {
