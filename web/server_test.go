@@ -59,7 +59,7 @@ func TestServerSearchAPIAndPage(t *testing.T) {
 	require.Contains(t, response.Body.String(), "p99 ingestion")
 	require.NotContains(t, response.Body.String(), `aria-label="Search"`)
 	require.Contains(t, response.Body.String(), "setInterval(refreshStats,10000)")
-	require.Contains(t, response.Body.String(), "const searchDebounceMS=250")
+	require.Contains(t, response.Body.String(), "const searchDebounceMS=150")
 	require.Contains(t, response.Body.String(), "},searchDebounceMS)")
 	require.Contains(t, response.Body.String(), `id="about-open"`)
 	require.Contains(t, response.Body.String(), `id="about-dialog"`)
