@@ -146,7 +146,7 @@ resource "google_cloud_run_v2_service" "ingester" {
 
       env {
         name  = "TURBOPUFFER_NAMESPACE"
-        value = var.turbopuffer_namespace
+        value = var.turbopuffer_ingester_namespace
       }
 
       env {

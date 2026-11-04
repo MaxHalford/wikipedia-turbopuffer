@@ -33,7 +33,13 @@ variable "write_api_key_secret" {
 }
 
 variable "turbopuffer_namespace" {
-  description = "The turbopuffer namespace for Wikipedia documents."
+  description = "The turbopuffer namespace queried by the web service."
+  type        = string
+  default     = "wikipedia-en-live"
+}
+
+variable "turbopuffer_ingester_namespace" {
+  description = "The turbopuffer namespace updated by the live ingester."
   type        = string
   default     = "wikipedia-en-live"
 }

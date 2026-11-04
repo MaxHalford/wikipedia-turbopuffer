@@ -118,9 +118,9 @@ gcloud run jobs execute wikipedia-backfill --region=YOUR_REGION --tasks=1 --wait
 gcloud run jobs execute wikipedia-backfill --region=YOUR_REGION --async
 ```
 
-After the dump completes, point the live ingester at the staging namespace and
-run `wikipedia-catchup`. Point the web service at that namespace after the
-reconciliation completes.
+After the dump completes, set `turbopuffer_ingester_namespace` to the staging
+namespace. Run `wikipedia-catchup`, then set `turbopuffer_namespace` to the
+staging namespace for the public cutover.
 
 ## Development
 
