@@ -79,3 +79,66 @@ func TestWikipediaPipeline(t *testing.T) {
 	require.NoError(t, stream.StopWithin(5*time.Second))
 	require.NoError(t, <-done)
 }
+
+func TestConfigureWikipediaDumpURL(t *testing.T) {
+	t.Setenv("WIKIPEDIA_DUMP_DATE", "20261101")
+	t.Setenv("CLOUD_RUN_TASK_INDEX", "7")
+	t.Setenv("WIKIPEDIA_DUMP_BASE_URL", "https://dumps.example.test/")
+	t.Setenv("WIKIPEDIA_DUMP_URL", "")
+
+	require.NoError(t, configureWikipediaDumpURL())
+	require.Equal(t,
+		"https://dumps.example.test/20261101/index_name%3Denwiki_content/enwiki_content-20261101-00007.json.bz2",
+		os.Getenv("WIKIPEDIA_DUMP_URL"),
+	)
+}
+
+func TestConfigureWikipediaDumpURLPreservesExplicitURL(t *testing.T) {
+	t.Setenv("WIKIPEDIA_DUMP_DATE", "invalid")
+	t.Setenv("CLOUD_RUN_TASK_INDEX", "invalid")
+	t.Setenv("WIKIPEDIA_DUMP_URL", "https://dumps.example.test/shard.json.bz2")
+
+	require.NoError(t, configureWikipediaDumpURL())
+	require.Equal(t, "https://dumps.example.test/shard.json.bz2", os.Getenv("WIKIPEDIA_DUMP_URL"))
+}
+
+func TestConfigureWikipediaDumpURLRejectsInvalidJobEnvironment(t *testing.T) {
+	t.Setenv("WIKIPEDIA_DUMP_DATE", "2026-11-01")
+	t.Setenv("CLOUD_RUN_TASK_INDEX", "zero")
+	t.Setenv("WIKIPEDIA_DUMP_URL", "")
+
+	require.EqualError(t, configureWikipediaDumpURL(), "WIKIPEDIA_DUMP_DATE must use YYYYMMDD format")
+}
+
+func TestCatchupRows(t *testing.T) {
+	response := cirrusResponse{}
+	response.Query.Pages = []cirrusPage{
+		{
+			PageID:    42,
+			Namespace: 0,
+			Documents: []cirrusDoc{{Source: cirrusSource{
+				Namespace: 0,
+				PageID:    42,
+				PageType:  "primary",
+				Text:      "Hello world.",
+				Timestamp: "2026-11-04T10:00:00Z",
+				Title:     "Test Article/Subpage",
+				Version:   12,
+			}}},
+		},
+		{PageID: 43, Namespace: 0, Missing: true},
+		{PageID: 44, Namespace: 0, Documents: []cirrusDoc{{Source: cirrusSource{PageID: 44, PageType: "redirect"}}}},
+	}
+
+	upserts, deletes, err := catchupRows([]uint64{42, 43, 44}, response)
+	require.NoError(t, err)
+	require.Equal(t, []map[string]any{{
+		"id":          "42",
+		"revision_id": uint64(12),
+		"text":        "Hello world.",
+		"title":       "Test Article/Subpage",
+		"updated_at":  "2026-11-04T10:00:00Z",
+		"url":         "https://en.wikipedia.org/wiki/Test_Article%2FSubpage",
+	}}, upserts)
+	require.Equal(t, []string{"43", "44"}, deletes)
+}

@@ -18,14 +18,15 @@ import (
 )
 
 const (
-	fieldAPIKey      = "api_key"
-	fieldBaseURL     = "base_url"
-	fieldBatching    = "batching"
-	fieldMaxInFlight = "max_in_flight"
-	fieldNamespace   = "namespace"
-	fieldRegion      = "region"
-	fieldSchema      = "schema"
-	fieldTimeout     = "timeout"
+	fieldAPIKey              = "api_key"
+	fieldBaseURL             = "base_url"
+	fieldBatching            = "batching"
+	fieldDisableBackpressure = "disable_backpressure"
+	fieldMaxInFlight         = "max_in_flight"
+	fieldNamespace           = "namespace"
+	fieldRegion              = "region"
+	fieldSchema              = "schema"
+	fieldTimeout             = "timeout"
 )
 
 var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
@@ -55,6 +56,9 @@ func turbopufferSpec() *service.ConfigSpec {
 			service.NewAnyMapField(fieldSchema).
 				Description("An optional turbopuffer attribute schema sent with every write.").
 				Default(map[string]any{}),
+			service.NewBoolField(fieldDisableBackpressure).
+				Description("Bypass indexing-backlog write protection for controlled bulk loads.").
+				Default(false),
 			service.NewDurationField(fieldTimeout).
 				Description("The timeout for each turbopuffer write request.").
 				Default("60s"),
@@ -115,6 +119,10 @@ func newTurbopufferOutput(conf *service.ParsedConfig, _ *service.Resources) (ser
 	if !ok {
 		return nil, policy, 0, fmt.Errorf("schema must be an object, got %T", schemaValue)
 	}
+	disableBackpressure, err := conf.FieldBool(fieldDisableBackpressure)
+	if err != nil {
+		return nil, policy, 0, err
+	}
 
 	timeout, err := conf.FieldDuration(fieldTimeout)
 	if err != nil {
@@ -132,10 +140,11 @@ func newTurbopufferOutput(conf *service.ParsedConfig, _ *service.Resources) (ser
 	}
 
 	return &turbopufferOutput{
-		apiKey:     apiKey,
-		endpoint:   baseURL + "/v2/namespaces/" + url.PathEscape(namespace),
-		schema:     schema,
-		httpClient: &http.Client{Timeout: timeout},
+		apiKey:              apiKey,
+		disableBackpressure: disableBackpressure,
+		endpoint:            baseURL + "/v2/namespaces/" + url.PathEscape(namespace),
+		schema:              schema,
+		httpClient:          &http.Client{Timeout: timeout},
 	}, policy, maxInFlight, nil
 }
 
@@ -154,10 +163,11 @@ func validateBaseURL(raw string) (string, error) {
 }
 
 type turbopufferOutput struct {
-	apiKey     string
-	endpoint   string
-	schema     map[string]any
-	httpClient *http.Client
+	apiKey              string
+	disableBackpressure bool
+	endpoint            string
+	schema              map[string]any
+	httpClient          *http.Client
 }
 
 func (t *turbopufferOutput) Connect(context.Context) error {
@@ -174,11 +184,13 @@ func (t *turbopufferOutput) WriteBatch(ctx context.Context, messages service.Mes
 	}
 
 	payload := struct {
-		UpsertRows []map[string]any `json:"upsert_rows"`
-		Schema     map[string]any   `json:"schema,omitempty"`
+		UpsertRows          []map[string]any `json:"upsert_rows"`
+		Schema              map[string]any   `json:"schema,omitempty"`
+		DisableBackpressure bool             `json:"disable_backpressure,omitempty"`
 	}{
-		UpsertRows: rows,
-		Schema:     t.schema,
+		UpsertRows:          rows,
+		Schema:              t.schema,
+		DisableBackpressure: t.disableBackpressure,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

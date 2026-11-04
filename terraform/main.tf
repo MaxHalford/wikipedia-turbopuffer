@@ -184,4 +184,124 @@ resource "google_cloud_run_v2_service" "ingester" {
   }
 }
 
+resource "google_cloud_run_v2_job" "backfill" {
+  name                = "wikipedia-backfill"
+  location            = var.region
+  deletion_protection = false
 
+  template {
+    task_count  = var.wikipedia_dump_shards
+    parallelism = var.wikipedia_backfill_parallelism
+
+    template {
+      service_account = google_service_account.ingester.email
+      timeout         = "14400s"
+      max_retries     = 2
+
+      containers {
+        image = var.ingester_image
+        args  = ["-c", "/backfill.yaml"]
+
+        resources {
+          limits = {
+            cpu    = "2"
+            memory = "1Gi"
+          }
+        }
+
+        env {
+          name  = "TURBOPUFFER_REGION"
+          value = var.turbopuffer_region
+        }
+
+        env {
+          name  = "TURBOPUFFER_NAMESPACE"
+          value = var.turbopuffer_backfill_namespace
+        }
+
+        env {
+          name  = "WIKIPEDIA_DUMP_DATE"
+          value = var.wikipedia_dump_date
+        }
+
+        env {
+          name  = "WIKIMEDIA_USER_AGENT"
+          value = var.wikimedia_user_agent
+        }
+
+        env {
+          name = "TURBOPUFFER_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.write_api_key.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [google_secret_manager_secret_iam_member.ingester_write_api_key]
+}
+
+resource "google_cloud_run_v2_job" "catchup" {
+  name                = "wikipedia-catchup"
+  location            = var.region
+  deletion_protection = false
+
+  template {
+    task_count  = 1
+    parallelism = 1
+
+    template {
+      service_account = google_service_account.ingester.email
+      timeout         = "7200s"
+      max_retries     = 1
+
+      containers {
+        image = var.ingester_image
+        args  = ["wikipedia-catchup"]
+
+        resources {
+          limits = {
+            cpu    = "2"
+            memory = "1Gi"
+          }
+        }
+
+        env {
+          name  = "TURBOPUFFER_REGION"
+          value = var.turbopuffer_region
+        }
+
+        env {
+          name  = "TURBOPUFFER_NAMESPACE"
+          value = var.turbopuffer_backfill_namespace
+        }
+
+        env {
+          name  = "WIKIPEDIA_CATCHUP_START"
+          value = var.wikipedia_catchup_start
+        }
+
+        env {
+          name  = "WIKIMEDIA_USER_AGENT"
+          value = var.wikimedia_user_agent
+        }
+
+        env {
+          name = "TURBOPUFFER_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.write_api_key.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [google_secret_manager_secret_iam_member.ingester_write_api_key]
+}

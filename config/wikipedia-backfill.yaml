@@ -45,6 +45,7 @@ output:
     region: ${TURBOPUFFER_REGION:gcp-us-central1}
     base_url: '${TURBOPUFFER_BASE_URL:}'
     namespace: ${TURBOPUFFER_NAMESPACE:wikipedia-en-live}
+    disable_backpressure: true
     schema:
       title:
         type: string
