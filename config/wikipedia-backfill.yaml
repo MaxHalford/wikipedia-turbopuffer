@@ -2,27 +2,20 @@ http:
   address: 0.0.0.0:${PORT:4195}
 
 input:
-  http_client:
-    url: ${WIKIPEDIA_DUMP_URL}
-    verb: GET
-    headers:
-      User-Agent: ${WIKIMEDIA_USER_AGENT}
-    timeout: 0s
-    stream:
-      enabled: true
-      reconnect: false
-      scanner:
-        decompress:
-          algorithm: bzip2
-          into:
-            lines:
-              max_buffer_size: 67108864
-              omit_empty: true
+  file:
+    paths: [${WIKIPEDIA_DUMP_FILE}]
+    scanner:
+      decompress:
+        algorithm: bzip2
+        into:
+          lines:
+            max_buffer_size: 67108864
+            omit_empty: true
 
 pipeline:
   processors:
     - mapping: |
-        root = content().string().parse_json()
+        root = content().string().parse_json().catch(deleted())
     - mapping: |
         root = if this.page_id != null &&
           this.namespace == 0 &&
@@ -32,10 +25,13 @@ pipeline:
           deleted()
         }
     - mapping: |
-        let page_text = this.text.trim()
+        let page_text = this.text.string().catch("").trim()
+        let opening_text = this.opening_text.string().catch("").trim()
+        let semantic_text = if $opening_text != "" { $opening_text } else { $page_text.slice(0, 4096) }
         root.id = "%v".format(this.page_id)
         root.title = this.title
         root.text = if $page_text != "" { $page_text } else { this.title }
+        root.embedding_text = (this.title + "\n\n" + $semantic_text).trim()
         root.url = "https://en.wikipedia.org/wiki/" + this.title.replace_all(" ", "_").escape_url_path()
         root.revision_id = this.version
         root.updated_at = this.timestamp
@@ -56,6 +52,9 @@ output:
       text:
         type: string
         full_text_search: true
+        filterable: false
+      embedding_text:
+        type: string
         filterable: false
         embed:
           model: nvidia/nemotron-3.5-embed-1b

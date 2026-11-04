@@ -48,7 +48,7 @@ func TestSearchClient(t *testing.T) {
 	queries := request["queries"].([]any)
 	require.Len(t, queries, 2)
 	vectorQuery := queries[0].(map[string]any)
-	require.Equal(t, []any{"text", "ANN", []any{"Embed", "puffer fish"}}, vectorQuery["rank_by"])
+	require.Equal(t, []any{"embedding_text", "ANN", []any{"Embed", "puffer fish"}}, vectorQuery["rank_by"])
 	require.Equal(t, float64(100), vectorQuery["limit"])
 	ftsQuery := queries[1].(map[string]any)
 	require.Equal(t, float64(100), ftsQuery["limit"])
@@ -98,7 +98,7 @@ func TestSearchClientModes(t *testing.T) {
 	semantic := <-requests
 	require.Equal(t, float64(7), semantic["limit"])
 	require.NotContains(t, semantic, "queries")
-	require.Equal(t, []any{"text", "ANN", []any{"Embed", "puffer fish"}}, semantic["rank_by"])
+	require.Equal(t, []any{"embedding_text", "ANN", []any{"Embed", "puffer fish"}}, semantic["rank_by"])
 
 	_, err = client.SearchWithMode(t.Context(), "puffer fish", 7, SearchModeHybrid)
 	require.NoError(t, err)

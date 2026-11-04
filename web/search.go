@@ -223,7 +223,7 @@ func (c *SearchClient) SearchWithMode(ctx context.Context, query string, limit i
 		}},
 	}
 	vectorQuery := map[string]any{
-		"rank_by":            []any{"text", "ANN", []any{"Embed", query}},
+		"rank_by":            []any{"embedding_text", "ANN", []any{"Embed", query}},
 		"limit":              limit,
 		"include_attributes": includeAttributes,
 		"compute_attributes": computeAttributes,
