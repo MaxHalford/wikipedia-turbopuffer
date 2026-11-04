@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,12 +18,17 @@ import (
 func TestWikipediaPipeline(t *testing.T) {
 	streamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"canary\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Canary\",\"revision\":{\"new\":11}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:01Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
 		writer.(http.Flusher).Flush()
 	}))
 	defer streamServer.Close()
 
+	var canaryRequests atomic.Int32
 	pageServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.EscapedPath() == "/page/Canary/with_html" {
+			canaryRequests.Add(1)
+		}
 		require.Equal(t, "/page/Test%20Article/with_html", request.URL.EscapedPath())
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(writer, `{"id":11250397,"key":"Test_Article","title":"Test Article","latest":{"id":12,"timestamp":"2026-11-04T10:00:00Z"},"html":"<h1>Test Article</h1><p>Hello <strong>world</strong>.</p>"}`)
@@ -64,14 +70,28 @@ func TestWikipediaPipeline(t *testing.T) {
 	select {
 	case body := <-writes:
 		rows := body["upsert_rows"].([]any)
+		row := rows[0].(map[string]any)
+		ingestedAt, ok := row["ingested_at"].(string)
+		require.True(t, ok)
+		parsed, err := time.Parse(time.RFC3339Nano, ingestedAt)
+		require.NoError(t, err)
+		require.WithinDuration(t, time.Now(), parsed, 5*time.Second)
+		delete(row, "ingested_at")
 		require.Equal(t, map[string]any{
-			"id":          "11250397",
-			"revision_id": float64(12),
-			"text":        "Test Article Hello world.",
-			"title":       "Test Article",
-			"updated_at":  "2026-11-04T10:00:00Z",
-			"url":         "https://en.wikipedia.org/wiki/Test_Article",
-		}, rows[0])
+			"id":              "11250397",
+			"source_event_at": "2026-11-04T10:00:01Z",
+			"revision_id":     float64(12),
+			"text":            "Test Article Hello world.",
+			"title":           "Test Article",
+			"updated_at":      "2026-11-04T10:00:00Z",
+			"url":             "https://en.wikipedia.org/wiki/Test_Article",
+		}, row)
+		require.Equal(t, []any{
+			"revision_id",
+			"Lt",
+			map[string]any{"$ref_new": "revision_id"},
+		}, body["upsert_condition"])
+		require.Zero(t, canaryRequests.Load())
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the Wikipedia pipeline")
 	}
@@ -141,4 +161,111 @@ func TestCatchupRows(t *testing.T) {
 		"url":         "https://en.wikipedia.org/wiki/Test_Article%2FSubpage",
 	}}, upserts)
 	require.Equal(t, []string{"43", "44"}, deletes)
+}
+
+func TestCollectRecentPageIDsUsesClosedWindow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "2026-11-04T10:00:00Z", request.URL.Query().Get("rcstart"))
+		require.Equal(t, "2026-11-04T10:05:00Z", request.URL.Query().Get("rcend"))
+		require.Equal(t, "newer", request.URL.Query().Get("rcdir"))
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(writer, `{"query":{"recentchanges":[]}}`)
+	}))
+	defer server.Close()
+
+	config := &catchupConfig{
+		apiURL:      server.URL,
+		start:       "2026-11-04T10:00:00Z",
+		end:         "2026-11-04T10:05:00Z",
+		userAgent:   "test/0.1",
+		httpClient:  server.Client(),
+		requestGate: &requestGate{},
+	}
+	require.NoError(t, collectRecentPageIDs(t.Context(), config, map[uint64]struct{}{}, true))
+}
+
+func TestRetryDelayHonorsRetryAfter(t *testing.T) {
+	now := time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC)
+
+	require.Equal(t, 30*time.Second, retryDelay(0, "30", now))
+	require.Equal(t, 45*time.Second, retryDelay(1, now.Add(45*time.Second).Format(http.TimeFormat), now))
+	require.Equal(t, 4*time.Second, retryDelay(2, "invalid", now))
+}
+
+func TestWikipediaRequestGateRespectsCancellation(t *testing.T) {
+	gate := &requestGate{
+		interval: time.Second,
+		next:     time.Now().Add(time.Hour),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.ErrorIs(t, gate.Wait(ctx), context.Canceled)
+}
+
+func TestWriteCatchupRowsUsesRevisionGuards(t *testing.T) {
+	writes := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		decoder := json.NewDecoder(request.Body)
+		decoder.UseNumber()
+		var body map[string]any
+		require.NoError(t, decoder.Decode(&body))
+		writes <- body
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	config := &catchupConfig{
+		apiKey:      "tpuf_test",
+		baseURL:     server.URL,
+		namespace:   "wikipedia-test",
+		end:         "2026-11-04T10:05:00Z",
+		writeClient: server.Client(),
+	}
+	require.NoError(t, writeCatchupRows(t.Context(), config,
+		[]map[string]any{{"id": "42", "revision_id": 12}},
+		[]string{"43"},
+	))
+	require.Equal(t, map[string]any{
+		"delete_condition": []any{"updated_at", "Lt", "2026-11-04T10:05:00Z"},
+		"deletes":          []any{"43"},
+		"upsert_condition": []any{"revision_id", "Lt", map[string]any{"$ref_new": "revision_id"}},
+		"upsert_rows": []any{
+			map[string]any{"id": "42", "revision_id": json.Number("12")},
+		},
+	}, <-writes)
+}
+
+func TestCatchupWatermarkRoundTrip(t *testing.T) {
+	writes := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+		if request.URL.Path == "/v2/namespaces/wikipedia-test/query" {
+			require.Equal(t, []any{"id", "Eq", catchupWatermarkID}, body["filters"])
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(writer, `{"rows":[{"id":"__wikipedia_catchup_watermark__","sync_watermark":"2026-11-04T10:05:00Z"}]}`)
+			return
+		}
+		writes <- body
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	config := &catchupConfig{
+		apiKey:      "tpuf_test",
+		baseURL:     server.URL,
+		namespace:   "wikipedia-test",
+		writeClient: server.Client(),
+	}
+	require.NoError(t, writeCatchupWatermark(t.Context(), config, "2026-11-04T10:05:00Z"))
+	write := <-writes
+	require.Equal(t,
+		[]any{"sync_watermark", "Lt", map[string]any{"$ref_new": "sync_watermark"}},
+		write["upsert_condition"],
+	)
+
+	watermark, err := readCatchupWatermark(t.Context(), config)
+	require.NoError(t, err)
+	require.Equal(t, "2026-11-04T10:05:00Z", watermark)
 }

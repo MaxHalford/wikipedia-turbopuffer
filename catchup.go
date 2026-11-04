@@ -19,7 +19,34 @@ import (
 	"time"
 )
 
-const catchupBatchSize = 50
+const (
+	catchupBatchSize         = 50
+	catchupWatermarkID       = "__wikipedia_catchup_watermark__"
+	wikipediaRequestInterval = time.Second
+)
+
+type requestGate struct {
+	mu       sync.Mutex
+	next     time.Time
+	interval time.Duration
+}
+
+func (gate *requestGate) Wait(ctx context.Context) error {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+
+	if delay := time.Until(gate.next); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	gate.next = time.Now().Add(gate.interval)
+	return nil
+}
 
 type catchupConfig struct {
 	apiKey      string
@@ -27,10 +54,12 @@ type catchupConfig struct {
 	baseURL     string
 	namespace   string
 	start       string
+	end         string
 	userAgent   string
 	workers     int
 	httpClient  *http.Client
 	writeClient *http.Client
+	requestGate *requestGate
 }
 
 type recentChangesResponse struct {
@@ -89,6 +118,19 @@ func runWikipediaCatchup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := writeCatchupWatermark(ctx, config, config.start); err != nil {
+		return fmt.Errorf("initialize catchup watermark: %w", err)
+	}
+	config.start, err = readCatchupWatermark(ctx, config)
+	if err != nil {
+		return fmt.Errorf("read catchup watermark: %w", err)
+	}
+	config.end = time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	start, _ := time.Parse(time.RFC3339, config.start)
+	end, _ := time.Parse(time.RFC3339, config.end)
+	if !start.Before(end) {
+		return nil
+	}
 
 	pageIDs := make(map[uint64]struct{})
 	if err := collectRecentPageIDs(ctx, config, pageIDs, true); err != nil {
@@ -103,9 +145,30 @@ func runWikipediaCatchup(ctx context.Context) error {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	log.Printf("reconciling %d pages changed since %s", len(ids), config.start)
+	log.Printf("reconciling %d pages changed between %s and %s", len(ids), config.start, config.end)
 
-	return reconcilePages(ctx, config, ids)
+	if err := reconcilePages(ctx, config, ids); err != nil {
+		return err
+	}
+	if err := writeCatchupWatermark(ctx, config, config.end); err != nil {
+		return fmt.Errorf("commit catchup watermark: %w", err)
+	}
+	return nil
+}
+
+func runWikipediaCatchupLoop(ctx context.Context, interval time.Duration) {
+	for {
+		if err := runWikipediaCatchup(ctx); err != nil {
+			log.Printf("Wikipedia reconciliation failed: %v", err)
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 func catchupConfigFromEnv() (*catchupConfig, error) {
@@ -119,6 +182,7 @@ func catchupConfigFromEnv() (*catchupConfig, error) {
 		workers:     4,
 		httpClient:  &http.Client{Timeout: 2 * time.Minute},
 		writeClient: &http.Client{Timeout: time.Minute},
+		requestGate: &requestGate{interval: wikipediaRequestInterval},
 	}
 	if config.baseURL == "" {
 		region := getenv("TURBOPUFFER_REGION", "gcp-us-central1")
@@ -160,6 +224,7 @@ func collectRecentPageIDs(ctx context.Context, config *catchupConfig, pageIDs ma
 			"rcdir":         {"newer"},
 			"rclimit":       {"max"},
 			"rcprop":        {"ids|loginfo"},
+			"rcend":         {config.end},
 			"rcstart":       {config.start},
 		}
 		if mainNamespace {
@@ -301,16 +366,26 @@ func catchupRows(requested []uint64, response cirrusResponse) ([]map[string]any,
 }
 
 func getWikipediaJSON(ctx context.Context, config *catchupConfig, parameters url.Values, destination any) error {
+	if err := config.requestGate.Wait(ctx); err != nil {
+		return err
+	}
 	endpoint := config.apiURL + "?" + parameters.Encode()
 	return retryJSON(ctx, config.httpClient, http.MethodGet, endpoint, config.userAgent, "", nil, destination)
 }
 
 func writeCatchupRows(ctx context.Context, config *catchupConfig, upserts []map[string]any, deletes []string) error {
 	payload := struct {
-		Upserts             []map[string]any `json:"upsert_rows,omitempty"`
-		Deletes             []string         `json:"deletes,omitempty"`
-		DisableBackpressure bool             `json:"disable_backpressure"`
-	}{Upserts: upserts, Deletes: deletes, DisableBackpressure: true}
+		Upserts         []map[string]any `json:"upsert_rows,omitempty"`
+		Deletes         []string         `json:"deletes,omitempty"`
+		UpsertCondition any              `json:"upsert_condition,omitempty"`
+		DeleteCondition any              `json:"delete_condition,omitempty"`
+	}{Upserts: upserts, Deletes: deletes}
+	if len(upserts) > 0 {
+		payload.UpsertCondition = []any{"revision_id", "Lt", map[string]any{"$ref_new": "revision_id"}}
+	}
+	if len(deletes) > 0 {
+		payload.DeleteCondition = []any{"updated_at", "Lt", config.end}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal catchup write: %w", err)
@@ -319,9 +394,58 @@ func writeCatchupRows(ctx context.Context, config *catchupConfig, upserts []map[
 	return retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, nil)
 }
 
+func readCatchupWatermark(ctx context.Context, config *catchupConfig) (string, error) {
+	payload := map[string]any{
+		"consistency":        map[string]any{"level": "strong"},
+		"filters":            []any{"id", "Eq", catchupWatermarkID},
+		"include_attributes": []string{"sync_watermark"},
+		"limit":              1,
+		"rank_by":            []any{"id", "asc"},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		Rows []struct {
+			Watermark string `json:"sync_watermark"`
+		} `json:"rows"`
+	}
+	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace) + "/query"
+	if err := retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, &response); err != nil {
+		return "", err
+	}
+	if len(response.Rows) != 1 || response.Rows[0].Watermark == "" {
+		return "", errors.New("catchup watermark is missing")
+	}
+	if _, err := time.Parse(time.RFC3339, response.Rows[0].Watermark); err != nil {
+		return "", fmt.Errorf("invalid catchup watermark: %w", err)
+	}
+	return response.Rows[0].Watermark, nil
+}
+
+func writeCatchupWatermark(ctx context.Context, config *catchupConfig, watermark string) error {
+	payload := map[string]any{
+		"schema": map[string]any{
+			"sync_watermark": map[string]any{"type": "datetime"},
+		},
+		"upsert_condition": []any{"sync_watermark", "Lt", map[string]any{"$ref_new": "sync_watermark"}},
+		"upsert_rows": []any{
+			map[string]any{"id": catchupWatermarkID, "sync_watermark": watermark},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace)
+	return retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, nil)
+}
+
 func retryJSON(ctx context.Context, client *http.Client, method, endpoint, userAgent, apiKey string, body []byte, destination any) error {
 	var lastError error
 	for attempt := range 6 {
+		retryAfter := ""
 		request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return err
@@ -335,6 +459,7 @@ func retryJSON(ctx context.Context, client *http.Client, method, endpoint, userA
 		}
 		response, err := client.Do(request)
 		if err == nil {
+			retryAfter = response.Header.Get("Retry-After")
 			responseBody, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
 			if readErr != nil {
@@ -356,12 +481,24 @@ func retryJSON(ctx context.Context, client *http.Client, method, endpoint, userA
 		}
 		lastError = err
 		if attempt < 5 {
+			delay := retryDelay(attempt, retryAfter, time.Now())
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(time.Duration(1<<attempt) * time.Second):
+			case <-time.After(delay):
 			}
 		}
 	}
 	return lastError
+}
+
+func retryDelay(attempt int, retryAfter string, now time.Time) time.Duration {
+	delay := time.Duration(1<<attempt) * time.Second
+	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds >= 0 {
+		return max(delay, time.Duration(seconds)*time.Second)
+	}
+	if timestamp, err := http.ParseTime(retryAfter); err == nil {
+		return max(delay, timestamp.Sub(now))
+	}
+	return delay
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 
@@ -26,7 +27,15 @@ func main() {
 	if err := configureWikipediaDumpURL(); err != nil {
 		log.Fatal(err)
 	}
-	service.RunCLI(context.Background())
+	ctx := context.Background()
+	if value := os.Getenv("WIKIPEDIA_CATCHUP_INTERVAL"); value != "" {
+		interval, err := time.ParseDuration(value)
+		if err != nil || interval < time.Minute {
+			log.Fatal("WIKIPEDIA_CATCHUP_INTERVAL must be a duration of at least one minute")
+		}
+		go runWikipediaCatchupLoop(ctx, interval)
+	}
+	service.RunCLI(ctx)
 }
 
 func configureWikipediaDumpURL() error {

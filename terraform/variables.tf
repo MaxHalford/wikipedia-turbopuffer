@@ -27,7 +27,7 @@ variable "query_api_key_secret" {
 }
 
 variable "write_api_key_secret" {
-  description = "The Secret Manager secret with a write-only turbopuffer key."
+  description = "The Secret Manager secret with a turbopuffer ingestion key that can query and write."
   type        = string
   default     = "wikipedia-turbopuffer-write-api-key"
 }
@@ -72,6 +72,12 @@ variable "wikipedia_catchup_start" {
   description = "The earliest revision timestamp to reconcile after the dump."
   type        = string
   default     = "2026-11-01T00:00:00Z"
+}
+
+variable "wikipedia_catchup_interval" {
+  description = "How often the live ingester reconciles recent changes."
+  type        = string
+  default     = "5m"
 }
 
 variable "turbopuffer_region" {

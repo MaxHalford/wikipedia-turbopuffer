@@ -28,6 +28,7 @@ pipeline:
         }
     - mapping: |
         root = if this.wiki == "enwiki" &&
+          this.meta.domain != "canary" &&
           this.namespace == 0 &&
           ["edit", "new"].contains(this.type) &&
           this.revision.new != null {
@@ -36,6 +37,7 @@ pipeline:
           deleted()
         }
         meta wikipedia_title = this.title
+        meta wikipedia_event_at = this.meta.dt
     - branch:
         request_map: 'root = ""'
         processors:
@@ -57,6 +59,8 @@ pipeline:
         root.url = "https://en.wikipedia.org/wiki/" + this.key.escape_url_path()
         root.revision_id = this.latest.id
         root.updated_at = this.latest.timestamp
+        root.source_event_at = @wikipedia_event_at
+        root.ingested_at = now().ts_format("2006-01-02T15:04:05.999999999Z07:00")
 
 output:
   turbopuffer:
@@ -80,7 +84,12 @@ output:
         type: int
       updated_at:
         type: datetime
+      ingested_at:
+        type: datetime
+      source_event_at:
+        type: datetime
     max_in_flight: 4
+    newer_than: revision_id
     batching:
       count: 100
       period: 1s
