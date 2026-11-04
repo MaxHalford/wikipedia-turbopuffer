@@ -32,9 +32,10 @@ pipeline:
           deleted()
         }
     - mapping: |
+        let page_text = this.text.trim()
         root.id = "%v".format(this.page_id)
         root.title = this.title
-        root.text = this.text
+        root.text = if $page_text != "" { $page_text } else { this.title }
         root.url = "https://en.wikipedia.org/wiki/" + this.title.replace_all(" ", "_").escape_url_path()
         root.revision_id = this.version
         root.updated_at = this.timestamp
