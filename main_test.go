@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +18,39 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDownloadWikipediaDumpResumesPartialResponse(t *testing.T) {
+	contents := []byte("complete Wikipedia dump contents")
+	var downloads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "wikipedia-test/0.1", request.Header.Get("User-Agent"))
+		writer.Header().Set("Accept-Ranges", "bytes")
+		if request.Method == http.MethodHead {
+			writer.Header().Set("Content-Length", strconv.Itoa(len(contents)))
+			return
+		}
+		attempt := downloads.Add(1)
+		if attempt == 1 {
+			require.Empty(t, request.Header.Get("Range"))
+			writer.Header().Set("Content-Length", strconv.Itoa(len(contents)))
+			_, _ = writer.Write(contents[:10])
+			return
+		}
+		require.Equal(t, "bytes=10-", request.Header.Get("Range"))
+		writer.Header().Set("Content-Length", strconv.Itoa(len(contents)-10))
+		writer.Header().Set("Content-Range", fmt.Sprintf("bytes 10-%d/%d", len(contents)-1, len(contents)))
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write(contents[10:])
+	}))
+	defer server.Close()
+
+	destination := filepath.Join(t.TempDir(), "dump.json.bz2")
+	require.NoError(t, downloadWikipediaDump(t.Context(), server.Client(), server.URL, destination, "wikipedia-test/0.1"))
+	downloaded, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(contents, downloaded))
+	require.Equal(t, int32(2), downloads.Load())
+}
 
 func TestWikipediaPipeline(t *testing.T) {
 	streamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -78,6 +115,7 @@ func TestWikipediaPipeline(t *testing.T) {
 		require.WithinDuration(t, time.Now(), parsed, 5*time.Second)
 		delete(row, "ingested_at")
 		require.Equal(t, map[string]any{
+			"embedding_text":  "Test Article\n\nTest Article Hello world.",
 			"id":              "11250397",
 			"source_event_at": "2026-11-04T10:00:01Z",
 			"revision_id":     float64(12),
@@ -97,12 +135,16 @@ func TestWikipediaPipeline(t *testing.T) {
 			"type":             "string",
 			"full_text_search": true,
 			"filterable":       false,
+		}, schema["text"])
+		require.Equal(t, map[string]any{
+			"type":       "string",
+			"filterable": false,
 			"embed": map[string]any{
 				"model": "nvidia/nemotron-3.5-embed-1b",
 				"dims":  float64(1024),
 				"dtype": "f16",
 			},
-		}, schema["text"])
+		}, schema["embedding_text"])
 		require.Zero(t, canaryRequests.Load())
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the Wikipedia pipeline")
@@ -149,13 +191,14 @@ func TestCatchupRows(t *testing.T) {
 			PageID:    42,
 			Namespace: 0,
 			Documents: []cirrusDoc{{Source: cirrusSource{
-				Namespace: 0,
-				PageID:    42,
-				PageType:  "primary",
-				Text:      "Hello world.",
-				Timestamp: "2026-11-04T10:00:00Z",
-				Title:     "Test Article/Subpage",
-				Version:   12,
+				Namespace:   0,
+				OpeningText: "Lead section.",
+				PageID:      42,
+				PageType:    "primary",
+				Text:        "Hello world.",
+				Timestamp:   "2026-11-04T10:00:00Z",
+				Title:       "Test Article/Subpage",
+				Version:     12,
 			}}},
 		},
 		{
@@ -178,21 +221,28 @@ func TestCatchupRows(t *testing.T) {
 	upserts, deletes, err := catchupRows([]uint64{42, 43, 44, 45}, response)
 	require.NoError(t, err)
 	require.Equal(t, []map[string]any{{
-		"id":          "42",
-		"revision_id": uint64(12),
-		"text":        "Hello world.",
-		"title":       "Test Article/Subpage",
-		"updated_at":  "2026-11-04T10:00:00Z",
-		"url":         "https://en.wikipedia.org/wiki/Test_Article%2FSubpage",
+		"embedding_text": "Test Article/Subpage\n\nLead section.",
+		"id":             "42",
+		"revision_id":    uint64(12),
+		"text":           "Hello world.",
+		"title":          "Test Article/Subpage",
+		"updated_at":     "2026-11-04T10:00:00Z",
+		"url":            "https://en.wikipedia.org/wiki/Test_Article%2FSubpage",
 	}, {
-		"id":          "45",
-		"revision_id": uint64(13),
-		"text":        "Empty Article",
-		"title":       "Empty Article",
-		"updated_at":  "2026-11-04T10:00:00Z",
-		"url":         "https://en.wikipedia.org/wiki/Empty_Article",
+		"embedding_text": "Empty Article",
+		"id":             "45",
+		"revision_id":    uint64(13),
+		"text":           "Empty Article",
+		"title":          "Empty Article",
+		"updated_at":     "2026-11-04T10:00:00Z",
+		"url":            "https://en.wikipedia.org/wiki/Empty_Article",
 	}}, upserts)
 	require.Equal(t, []string{"43", "44"}, deletes)
+}
+
+func TestSemanticArticleTextTruncatesBody(t *testing.T) {
+	body := strings.Repeat("é", 5000)
+	require.Equal(t, "Title\n\n"+strings.Repeat("é", 4096), semanticArticleText("Title", "", body))
 }
 
 func TestCollectRecentPageIDsUsesClosedWindow(t *testing.T) {

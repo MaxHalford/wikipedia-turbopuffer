@@ -97,13 +97,14 @@ type cirrusDoc struct {
 }
 
 type cirrusSource struct {
-	Namespace int    `json:"namespace"`
-	PageID    uint64 `json:"page_id"`
-	PageType  string `json:"page_type"`
-	Text      string `json:"text"`
-	Timestamp string `json:"timestamp"`
-	Title     string `json:"title"`
-	Version   uint64 `json:"version"`
+	Namespace   int    `json:"namespace"`
+	OpeningText string `json:"opening_text"`
+	PageID      uint64 `json:"page_id"`
+	PageType    string `json:"page_type"`
+	Text        string `json:"text"`
+	Timestamp   string `json:"timestamp"`
+	Title       string `json:"title"`
+	Version     uint64 `json:"version"`
 }
 
 type apiErrorResponse struct {
@@ -315,7 +316,7 @@ func reconcileBatch(ctx context.Context, config *catchupConfig, ids []uint64) er
 	}
 	parameters := url.Values{
 		"action":        {"query"},
-		"cdincludes":    {"page_id|namespace|page_type|title|text|version|timestamp"},
+		"cdincludes":    {"page_id|namespace|page_type|title|opening_text|text|version|timestamp"},
 		"format":        {"json"},
 		"formatversion": {"2"},
 		"maxlag":        {"5"},
@@ -353,12 +354,13 @@ func catchupRows(requested []uint64, response cirrusResponse) ([]map[string]any,
 			text = source.Title
 		}
 		upserts = append(upserts, map[string]any{
-			"id":          strconv.FormatUint(source.PageID, 10),
-			"revision_id": source.Version,
-			"text":        text,
-			"title":       source.Title,
-			"updated_at":  source.Timestamp,
-			"url":         "https://en.wikipedia.org/wiki/" + url.PathEscape(strings.ReplaceAll(source.Title, " ", "_")),
+			"embedding_text": semanticArticleText(source.Title, source.OpeningText, source.Text),
+			"id":             strconv.FormatUint(source.PageID, 10),
+			"revision_id":    source.Version,
+			"text":           text,
+			"title":          source.Title,
+			"updated_at":     source.Timestamp,
+			"url":            "https://en.wikipedia.org/wiki/" + url.PathEscape(strings.ReplaceAll(source.Title, " ", "_")),
 		})
 	}
 	for _, id := range requested {
@@ -367,6 +369,21 @@ func catchupRows(requested []uint64, response cirrusResponse) ([]map[string]any,
 		}
 	}
 	return upserts, deletes, nil
+}
+
+func semanticArticleText(title, openingText, text string) string {
+	semanticText := strings.TrimSpace(openingText)
+	if semanticText == "" {
+		runes := []rune(strings.TrimSpace(text))
+		if len(runes) > 4096 {
+			runes = runes[:4096]
+		}
+		semanticText = string(runes)
+	}
+	if semanticText == "" {
+		return title
+	}
+	return title + "\n\n" + semanticText
 }
 
 func getWikipediaJSON(ctx context.Context, config *catchupConfig, parameters url.Values, destination any) error {

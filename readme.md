@@ -67,15 +67,16 @@ CirrusSearch content dump:
 ```bash
 export WIKIPEDIA_DUMP_URL='https://dumps.wikimedia.org/other/cirrus_search_index/DATE/index_name%3Denwiki_content/SHARD.json.bz2'
 TURBOPUFFER_API_KEY="$TURBOPUFFER_API_WRITE_KEY" \
-  go run . -c config/wikipedia-backfill.yaml
+  go run . wikipedia-backfill
 ```
 
-Run one process per shard. The pipeline streams and decompresses each file, so
-it does not load a complete dump into memory. The output bypasses turbopuffer's
-indexing-backlog guard during this controlled bulk load. Native embeddings are
-created as each document is written. Adding an embedding schema to an existing
-namespace does not embed rows already stored there, so enable embeddings in a
-new namespace and backfill it before cutover.
+Run one process per shard. The downloader resumes interrupted HTTP transfers,
+then the pipeline decompresses each local shard as a stream. The output bypasses
+turbopuffer's indexing-backlog guard during this controlled bulk load. Native
+embeddings use the article title and lead section, while BM25 indexes the full
+article body. Adding an embedding schema to an existing namespace does not embed
+rows already stored there, so enable embeddings in a new namespace and backfill
+it before cutover.
 
 After the dump completes, reconcile every page that changed after the snapshot:
 
@@ -153,6 +154,7 @@ TURBOPUFFER_API_KEY=tpuf_test \
 TURBOPUFFER_API_KEY=tpuf_test \
   WIKIMEDIA_USER_AGENT='test/0.1 (mailto:test@example.com)' \
   WIKIPEDIA_DUMP_URL=https://example.com/dump.json.bz2 \
+  WIKIPEDIA_DUMP_FILE=/tmp/dump.json.bz2 \
   go run . lint config/wikipedia-backfill.yaml
 ```
 

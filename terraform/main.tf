@@ -224,12 +224,12 @@ resource "google_cloud_run_v2_job" "backfill" {
 
       containers {
         image = local.job_image
-        args  = ["-c", "/backfill.yaml"]
+        args  = ["wikipedia-backfill"]
 
         resources {
           limits = {
             cpu    = "2"
-            memory = "1Gi"
+            memory = "2Gi"
           }
         }
 

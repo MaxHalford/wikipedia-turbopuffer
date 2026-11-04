@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -18,16 +20,22 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
 	if len(os.Args) > 1 && os.Args[1] == "wikipedia-catchup" {
-		if err := runWikipediaCatchup(context.Background()); err != nil {
+		if err := runWikipediaCatchup(ctx); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "wikipedia-backfill" {
+		if err := prepareWikipediaDump(ctx); err != nil {
+			log.Fatal(err)
+		}
+		os.Args = []string{os.Args[0], "-c", "/backfill.yaml"}
+	}
 	if err := configureWikipediaDumpURL(); err != nil {
 		log.Fatal(err)
 	}
-	ctx := context.Background()
 	if value := os.Getenv("WIKIPEDIA_CATCHUP_INTERVAL"); value != "" {
 		interval, err := time.ParseDuration(value)
 		if err != nil || interval < time.Minute {
@@ -36,6 +44,114 @@ func main() {
 		go runWikipediaCatchupLoop(ctx, interval)
 	}
 	service.RunCLI(ctx)
+}
+
+func prepareWikipediaDump(ctx context.Context) error {
+	if file := os.Getenv("WIKIPEDIA_DUMP_FILE"); file != "" {
+		return nil
+	}
+	if err := configureWikipediaDumpURL(); err != nil {
+		return err
+	}
+	sourceURL := os.Getenv("WIKIPEDIA_DUMP_URL")
+	if sourceURL == "" {
+		return fmt.Errorf("WIKIPEDIA_DUMP_URL must not be empty")
+	}
+	destination := "/tmp/wikipedia-dump.json.bz2"
+	if err := downloadWikipediaDump(ctx, http.DefaultClient, sourceURL, destination, os.Getenv("WIKIMEDIA_USER_AGENT")); err != nil {
+		return err
+	}
+	return os.Setenv("WIKIPEDIA_DUMP_FILE", destination)
+}
+
+func downloadWikipediaDump(ctx context.Context, client *http.Client, sourceURL, destination, userAgent string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, sourceURL, nil)
+	if err != nil {
+		return fmt.Errorf("create Wikipedia dump HEAD request: %w", err)
+	}
+	request.Header.Set("User-Agent", userAgent)
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("inspect Wikipedia dump: %w", err)
+	}
+	response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("inspect Wikipedia dump: unexpected status %s", response.Status)
+	}
+	expectedSize := response.ContentLength
+	if expectedSize <= 0 {
+		return fmt.Errorf("inspect Wikipedia dump: missing content length")
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		currentSize := int64(0)
+		if info, statErr := os.Stat(destination); statErr == nil {
+			currentSize = info.Size()
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("inspect partial Wikipedia dump: %w", statErr)
+		}
+		if currentSize == expectedSize {
+			return nil
+		}
+		if currentSize > expectedSize {
+			if err := os.Truncate(destination, 0); err != nil {
+				return fmt.Errorf("reset oversized Wikipedia dump: %w", err)
+			}
+			currentSize = 0
+		}
+
+		request, err = http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+		if err != nil {
+			return fmt.Errorf("create Wikipedia dump request: %w", err)
+		}
+		request.Header.Set("User-Agent", userAgent)
+		if currentSize > 0 {
+			request.Header.Set("Range", fmt.Sprintf("bytes=%d-", currentSize))
+		}
+		response, err = client.Do(request)
+		if err != nil {
+			lastErr = fmt.Errorf("download Wikipedia dump: %w", err)
+			continue
+		}
+		if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
+			response.Body.Close()
+			lastErr = fmt.Errorf("download Wikipedia dump: unexpected status %s", response.Status)
+			continue
+		}
+
+		flags := os.O_CREATE | os.O_WRONLY
+		if response.StatusCode == http.StatusPartialContent && currentSize > 0 {
+			flags |= os.O_APPEND
+		} else {
+			flags |= os.O_TRUNC
+			currentSize = 0
+		}
+		file, openErr := os.OpenFile(destination, flags, 0o600)
+		if openErr != nil {
+			response.Body.Close()
+			return fmt.Errorf("open Wikipedia dump: %w", openErr)
+		}
+		_, copyErr := io.Copy(file, response.Body)
+		closeErr := file.Close()
+		response.Body.Close()
+		if copyErr != nil {
+			lastErr = fmt.Errorf("download Wikipedia dump: %w", copyErr)
+			continue
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close Wikipedia dump: %w", closeErr)
+		}
+		info, statErr := os.Stat(destination)
+		if statErr != nil {
+			return fmt.Errorf("inspect downloaded Wikipedia dump: %w", statErr)
+		}
+		if info.Size() == expectedSize {
+			return nil
+		}
+		lastErr = fmt.Errorf("download Wikipedia dump: got %d of %d bytes", info.Size(), expectedSize)
+	}
+	return lastErr
 }
 
 func configureWikipediaDumpURL() error {
