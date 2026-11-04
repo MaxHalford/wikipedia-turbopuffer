@@ -53,9 +53,10 @@ pipeline:
               parallel: true
         result_map: root = this
     - mapping: |
+        let page_text = this.html.html_to_text().trim()
         root.id = "%v".format(this.id)
         root.title = this.title
-        root.text = this.html.html_to_text()
+        root.text = if $page_text != "" { $page_text } else { this.title }
         root.url = "https://en.wikipedia.org/wiki/" + this.key.escape_url_path()
         root.revision_id = this.latest.id
         root.updated_at = this.latest.timestamp

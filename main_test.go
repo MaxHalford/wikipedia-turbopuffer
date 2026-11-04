@@ -158,11 +158,24 @@ func TestCatchupRows(t *testing.T) {
 				Version:   12,
 			}}},
 		},
+		{
+			PageID:    45,
+			Namespace: 0,
+			Documents: []cirrusDoc{{Source: cirrusSource{
+				Namespace: 0,
+				PageID:    45,
+				PageType:  "primary",
+				Text:      "  ",
+				Timestamp: "2026-11-04T10:00:00Z",
+				Title:     "Empty Article",
+				Version:   13,
+			}}},
+		},
 		{PageID: 43, Namespace: 0, Missing: true},
 		{PageID: 44, Namespace: 0, Documents: []cirrusDoc{{Source: cirrusSource{PageID: 44, PageType: "redirect"}}}},
 	}
 
-	upserts, deletes, err := catchupRows([]uint64{42, 43, 44}, response)
+	upserts, deletes, err := catchupRows([]uint64{42, 43, 44, 45}, response)
 	require.NoError(t, err)
 	require.Equal(t, []map[string]any{{
 		"id":          "42",
@@ -171,6 +184,13 @@ func TestCatchupRows(t *testing.T) {
 		"title":       "Test Article/Subpage",
 		"updated_at":  "2026-11-04T10:00:00Z",
 		"url":         "https://en.wikipedia.org/wiki/Test_Article%2FSubpage",
+	}, {
+		"id":          "45",
+		"revision_id": uint64(13),
+		"text":        "Empty Article",
+		"title":       "Empty Article",
+		"updated_at":  "2026-11-04T10:00:00Z",
+		"url":         "https://en.wikipedia.org/wiki/Empty_Article",
 	}}, upserts)
 	require.Equal(t, []string{"43", "44"}, deletes)
 }

@@ -348,10 +348,14 @@ func catchupRows(requested []uint64, response cirrusResponse) ([]map[string]any,
 			deletes = append(deletes, strconv.FormatUint(page.PageID, 10))
 			continue
 		}
+		text := strings.TrimSpace(source.Text)
+		if text == "" {
+			text = source.Title
+		}
 		upserts = append(upserts, map[string]any{
 			"id":          strconv.FormatUint(source.PageID, 10),
 			"revision_id": source.Version,
-			"text":        source.Text,
+			"text":        text,
 			"title":       source.Title,
 			"updated_at":  source.Timestamp,
 			"url":         "https://en.wikipedia.org/wiki/" + url.PathEscape(strings.ReplaceAll(source.Title, " ", "_")),

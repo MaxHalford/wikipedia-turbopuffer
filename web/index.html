@@ -15,9 +15,10 @@
     .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.03em}.mark{width:13px;height:13px;background:var(--orange);border:2px solid var(--ink);box-shadow:3px 3px 0 var(--ink)}
     .about-button{border:0;border-bottom:1px solid var(--ink);padding:2px 0;background:transparent;color:var(--ink);font:inherit;cursor:pointer}.about-button:hover{background:var(--orange)}
     .health-stats{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:15px;margin:0 0 22px;color:var(--muted);font-size:10px;font-weight:400}.health-activity{display:flex;align-items:center;justify-content:flex-end;gap:7px;text-align:right}.freshness-health{display:flex;align-items:center;gap:6px}.freshness-dot{width:6px;height:6px;flex:0 0 auto;border-radius:50%;background:var(--line)}.freshness-health.current .freshness-dot{background:#16a34a}.freshness-health.stale .freshness-dot{background:var(--orange-ink)}
-    form{display:flex;position:relative;margin-bottom:22px}
-    input{width:100%;border:2px solid var(--ink);background:#fff;border-radius:0;padding:17px;font:inherit;font-size:16px;outline:none;box-shadow:6px 6px 0 var(--ink);appearance:none}
-    input:focus{box-shadow:6px 6px 0 var(--orange)}
+    form{display:block;margin-bottom:16px}
+    input[type="search"]{width:100%;border:2px solid var(--ink);background:#fff;border-radius:0;padding:17px;font:inherit;font-size:16px;outline:none;box-shadow:6px 6px 0 var(--ink);appearance:none}
+    input[type="search"]:focus{box-shadow:6px 6px 0 var(--orange)}
+    .search-modes{display:flex;justify-content:flex-end;gap:12px;border:0;margin:12px 0 0;padding:0;color:var(--muted);font-size:10px}.search-modes label{cursor:pointer}.search-modes input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.search-modes span{padding:2px 3px;border-bottom:1px solid transparent}.search-modes label:hover span,.search-modes input:focus-visible+span{color:var(--ink);border-bottom-color:var(--ink)}.search-modes input:checked+span{background:var(--orange);color:var(--orange-ink)}
     .meta{min-height:20px;color:var(--muted);font-size:11px;margin:0 0 30px}.meta strong{color:var(--ink)}
     #status[aria-busy="true"]:after{content:"searching…"}
     ol{list-style:none;padding:0;margin:0}ol:not(:empty){border-top:1px solid var(--line)}
@@ -42,6 +43,7 @@
     <form action="/" method="get" role="search">
       <label for="q" hidden>Search English Wikipedia</label>
       <input id="q" name="q" type="search" value="{{.Query}}" placeholder="Try “object storage”" maxlength="300" autocomplete="off" autofocus>
+      <fieldset class="search-modes" aria-label="Search mode"><label><input type="radio" name="mode" value="keyword"{{if eq .Mode "keyword"}} checked{{end}}><span>keyword</span></label><label><input type="radio" name="mode" value="semantic"{{if eq .Mode "semantic"}} checked{{end}}><span>semantic</span></label><label><input type="radio" name="mode" value="hybrid"{{if eq .Mode "hybrid"}} checked{{end}}><span>hybrid</span></label></fieldset>
     </form>
     <p class="meta" id="status" aria-live="polite">{{if .Error}}{{.Error}}{{else if .Query}}<strong>{{len .Response.Results}}</strong> results in {{.Response.ElapsedMS}}ms{{end}}</p>
     <ol id="results">{{range .Response.Results}}<li><a class="result-title" href="{{.URL}}">{{.Title}}</a><a class="url" href="{{.URL}}">{{.URL}}</a>{{if .ExcerptHTML}}<p class="excerpt">{{.ExcerptHTML}}</p>{{end}}</li>{{else}}{{if .Query}}<li class="empty">No matching articles.</li>{{end}}{{end}}</ol>
@@ -51,23 +53,25 @@
     <div class="modal-inner">
       <div class="modal-header"><h2 id="about-title">about</h2><button class="modal-close" id="about-close" type="button" aria-label="Close about dialog">close</button></div>
       <div class="modal-copy">
-        <p>English Wikipedia articles, updated continuously with Redpanda Connect and searched with turbopuffer.</p>
+        <p>English Wikipedia articles, updated continuously with Redpanda Connect and searched with turbopuffer. Choose keyword search, semantic search, or hybrid search with reciprocal rank fusion.</p>
         <div class="modal-links"><a href="https://maxhalford.github.io/blog/wikipedia-on-turbopuffer/">Read the blog post</a><a href="https://github.com/MaxHalford/wikipedia-turbopuffer">View the source</a></div>
         <div class="modal-label">title search</div>
         <code class="api-endpoint">GET /w/rest.php/v1/search/title?q=solar&amp;limit=5</code>
         <div class="modal-label">page search</div>
         <code class="api-endpoint">GET /w/rest.php/v1/search/page?q=solar&amp;limit=5</code>
+        <div class="modal-label">search modes</div>
+        <code class="api-endpoint">GET /api/search?q=solar&amp;mode=hybrid</code>
       </div>
     </div>
   </dialog>
   <script>
-    const input=document.querySelector('#q'),results=document.querySelector('#results'),status=document.querySelector('#status'),about=document.querySelector('#about-dialog'),documents=document.querySelector('#stat-documents'),edits=document.querySelector('#stat-edits'),freshnessHealth=document.querySelector('#stat-freshness-health'),freshnessDot=document.querySelector('#stat-freshness-dot'),freshness=document.querySelector('#stat-freshness');const searchDebounceMS=150;let timer,controller;
+    const input=document.querySelector('#q'),modes=document.querySelectorAll('input[name="mode"]'),results=document.querySelector('#results'),status=document.querySelector('#status'),about=document.querySelector('#about-dialog'),documents=document.querySelector('#stat-documents'),edits=document.querySelector('#stat-edits'),freshnessHealth=document.querySelector('#stat-freshness-health'),freshnessDot=document.querySelector('#stat-freshness-dot'),freshness=document.querySelector('#stat-freshness');const searchDebounceMS=150;let timer,controller;
     const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const compact=new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1});
     const refreshStats=async()=>{try{const response=await fetch('/api/stats',{cache:'no-store'}),data=await response.json();if(!response.ok)throw Error(data.error);documents.textContent=compact.format(data.documents);documents.title=data.documents.toLocaleString('en');edits.textContent=compact.format(data.pages_edited_last_hour);edits.title=data.pages_edited_last_hour.toLocaleString('en');const samples=data.latency_sample_count,seconds=data.p99_ingest_latency_ms/1000;if(!samples){freshnessHealth.className='freshness-health';freshness.textContent='collecting p99 ingestion';freshnessDot.title='Waiting for live ingestion latency samples.';return}const current=seconds<30,message=`SLA ${current?'met':'missed'}: p99 ingestion latency is ${seconds.toFixed(2)} seconds across ${samples.toLocaleString('en')} page changes in the last hour. Target: under 30 seconds.`;freshnessHealth.className=`freshness-health ${current?'current':'stale'}`;freshness.textContent=`${seconds.toFixed(2)}s p99 ingestion`;freshnessDot.title=message;freshnessDot.setAttribute('aria-label',message)}catch{freshnessHealth.className='freshness-health';freshness.textContent='stats unavailable';freshnessDot.title='Ingestion SLA unavailable'}};
     const render=data=>{status.textContent=`${data.results.length} results in ${data.elapsed_ms}ms`;results.innerHTML=data.results.length?data.results.map(r=>`<li><a class="result-title" href="${esc(r.url)}">${esc(r.title)}</a><a class="url" href="${esc(r.url)}">${esc(r.url)}</a>${r.excerpt_html?`<p class="excerpt">${r.excerpt_html}</p>`:''}</li>`).join(''):'<li class="empty">No matching articles.</li>'};
     document.querySelector('#about-open').addEventListener('click',()=>about.showModal());document.querySelector('#about-close').addEventListener('click',()=>about.close());about.addEventListener('click',event=>{if(event.target===about)about.close()});
-    input.addEventListener('input',()=>{clearTimeout(timer);controller?.abort();const q=input.value.trim();if(!q){results.innerHTML='';status.textContent='';history.replaceState(null,'','/');return}timer=setTimeout(async()=>{controller=new AbortController();status.textContent='';status.setAttribute('aria-busy','true');try{const res=await fetch(`/api/search?q=${encodeURIComponent(q)}`,{signal:controller.signal});const data=await res.json();if(!res.ok)throw Error(data.error);render(data);history.replaceState(null,'',`/?q=${encodeURIComponent(q)}`)}catch(e){if(e.name!=='AbortError')status.textContent='Search is temporarily unavailable.'}finally{status.removeAttribute('aria-busy')}},searchDebounceMS)});
+    const search=()=>{clearTimeout(timer);controller?.abort();const q=input.value.trim();if(!q){results.innerHTML='';status.textContent='';history.replaceState(null,'','/');return}timer=setTimeout(async()=>{controller=new AbortController();status.textContent='';status.setAttribute('aria-busy','true');try{const mode=document.querySelector('input[name="mode"]:checked').value,params=new URLSearchParams({q,mode}),res=await fetch(`/api/search?${params}`,{signal:controller.signal}),data=await res.json();if(!res.ok)throw Error(data.error);render(data);history.replaceState(null,'',`/?${params}`)}catch(e){if(e.name!=='AbortError')status.textContent='Search is temporarily unavailable.'}finally{status.removeAttribute('aria-busy')}},searchDebounceMS)};input.addEventListener('input',search);modes.forEach(mode=>mode.addEventListener('change',search));
     refreshStats();setInterval(refreshStats,10000);
   </script>
 </body>
