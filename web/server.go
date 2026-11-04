@@ -306,7 +306,7 @@ func validQuery(raw string) (string, bool) {
 
 func validSearchMode(raw string) (SearchMode, bool) {
 	if raw == "" {
-		return SearchModeHybrid, true
+		return SearchModeKeyword, true
 	}
 	mode := SearchMode(raw)
 	switch mode {

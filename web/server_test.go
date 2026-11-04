@@ -75,7 +75,7 @@ func TestServerSearchAPIAndPage(t *testing.T) {
 	require.Contains(t, response.Body.String(), "/w/rest.php/v1/search/page?q=solar&amp;limit=5")
 	require.Contains(t, response.Body.String(), "/api/search?q=solar&amp;mode=hybrid")
 	require.Contains(t, response.Body.String(), `<fieldset class="search-modes" aria-label="Search mode">`)
-	require.Contains(t, response.Body.String(), `<input type="radio" name="mode" value="hybrid" checked><span>hybrid</span>`)
+	require.Contains(t, response.Body.String(), `<input type="radio" name="mode" value="keyword" checked><span>keyword</span>`)
 	require.Contains(t, response.Body.String(), "modes.forEach(mode=>mode.addEventListener('change',search))")
 	require.NotContains(t, response.Body.String(), "Powered by turbopuffer")
 }
