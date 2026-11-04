@@ -13,6 +13,7 @@ FROM gcr.io/distroless/static-debian13:nonroot
 
 COPY --from=build /redpanda-connect-turbopuffer /redpanda-connect-turbopuffer
 COPY config/wikipedia.yaml /connect.yaml
+COPY config/wikipedia-backfill.yaml /backfill.yaml
 
 EXPOSE 4195
 ENTRYPOINT ["/redpanda-connect-turbopuffer"]

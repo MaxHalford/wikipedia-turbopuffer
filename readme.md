@@ -66,7 +66,19 @@ TURBOPUFFER_API_KEY="$TURBOPUFFER_WRITE_API_KEY" \
 ```
 
 Run one process per shard. The pipeline streams and decompresses each file, so
-it does not load a complete dump into memory.
+it does not load a complete dump into memory. The output bypasses turbopuffer's
+indexing-backlog guard during this controlled bulk load.
+
+After the dump completes, reconcile every page that changed after the snapshot:
+
+```bash
+TURBOPUFFER_API_KEY="$TURBOPUFFER_WRITE_API_KEY" \
+  WIKIPEDIA_CATCHUP_START=2026-11-01T00:00:00Z \
+  go run . wikipedia-catchup
+```
+
+The reconciliation reads MediaWiki recent changes, fetches the current Cirrus
+documents in batches, and repairs edited, moved, and deleted pages.
 
 ## Deploy to Cloud Run
 
@@ -98,7 +110,17 @@ terraform -chdir=terraform apply \
   -var='wikimedia_user_agent=wikipedia-turbopuffer/0.1 (mailto:you@example.com)'
 ```
 
-Terraform prints the public Cloud Run URL as `cloud_run_url`.
+Terraform prints the public Cloud Run URL and both job names. Run a one-shard
+canary before you start the complete dump:
+
+```bash
+gcloud run jobs execute wikipedia-backfill --region=YOUR_REGION --tasks=1 --wait
+gcloud run jobs execute wikipedia-backfill --region=YOUR_REGION --async
+```
+
+After the dump completes, set `turbopuffer_ingester_namespace` to the staging
+namespace. Run `wikipedia-catchup`, then set `turbopuffer_namespace` to the
+staging namespace for the public cutover.
 
 ## Development
 
@@ -122,7 +144,9 @@ turbopuffer write against local HTTP servers.
 
 - Wikimedia's direct event stream has no durable replay cursor. An outage can
   lose events unless Kafka or Redpanda stores the stream first.
-- The live pipeline handles article creates and edits, but not deletes or moves.
+- The live pipeline handles article creates and edits. The reconciliation job
+  repairs deletes and moves during a dump cutover.
+- The live pipeline does not apply deletes and moves immediately after cutover.
 - The API returns `null` descriptions and thumbnails because the index does not
   store them.
 - A useful initial search index requires the separate multi-shard backfill.

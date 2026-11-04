@@ -38,10 +38,11 @@ func TestTurbopufferOutputWritesBatch(t *testing.T) {
 	defer server.Close()
 
 	output := &turbopufferOutput{
-		apiKey:     "tpuf_test",
-		endpoint:   server.URL + "/v2/namespaces/wikipedia-en",
-		schema:     map[string]any{"text": map[string]any{"type": "string", "full_text_search": true}},
-		httpClient: server.Client(),
+		apiKey:              "tpuf_test",
+		disableBackpressure: true,
+		endpoint:            server.URL + "/v2/namespaces/wikipedia-en",
+		schema:              map[string]any{"text": map[string]any{"type": "string", "full_text_search": true}},
+		httpClient:          server.Client(),
 	}
 	messages := service.MessageBatch{
 		service.NewMessage([]byte(`{"id":"42","title":"Old"}`)),
@@ -55,6 +56,7 @@ func TestTurbopufferOutputWritesBatch(t *testing.T) {
 	require.Equal(t, "Bearer tpuf_test", request.authorization)
 	require.Equal(t, "application/json", request.contentType)
 	require.Equal(t, map[string]any{
+		"disable_backpressure": true,
 		"schema": map[string]any{
 			"text": map[string]any{"type": "string", "full_text_search": true},
 		},
@@ -122,6 +124,7 @@ batching:
 	output := batchOutput.(*turbopufferOutput)
 	require.Equal(t, "http://localhost:9999/v2/namespaces/wikipedia-en", output.endpoint)
 	require.Equal(t, map[string]any{"text": map[string]any{"type": "string"}}, output.schema)
+	require.False(t, output.disableBackpressure)
 }
 
 func TestTurbopufferOutputRejectsInvalidConfiguration(t *testing.T) {

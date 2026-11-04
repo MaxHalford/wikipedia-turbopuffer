@@ -33,9 +33,45 @@ variable "write_api_key_secret" {
 }
 
 variable "turbopuffer_namespace" {
-  description = "The turbopuffer namespace for Wikipedia documents."
+  description = "The turbopuffer namespace queried by the web service."
   type        = string
   default     = "wikipedia-en-live"
+}
+
+variable "turbopuffer_ingester_namespace" {
+  description = "The turbopuffer namespace updated by the live ingester."
+  type        = string
+  default     = "wikipedia-en-live"
+}
+
+variable "turbopuffer_backfill_namespace" {
+  description = "The staging namespace for the Wikipedia dump backfill."
+  type        = string
+  default     = "wikipedia-en-20261101"
+}
+
+variable "wikipedia_dump_date" {
+  description = "The YYYYMMDD date of the Wikimedia CirrusSearch dump."
+  type        = string
+  default     = "20261101"
+}
+
+variable "wikipedia_dump_shards" {
+  description = "The number of files in the Wikimedia CirrusSearch dump."
+  type        = number
+  default     = 66
+}
+
+variable "wikipedia_backfill_parallelism" {
+  description = "The maximum number of concurrent dump workers."
+  type        = number
+  default     = 8
+}
+
+variable "wikipedia_catchup_start" {
+  description = "The earliest revision timestamp to reconcile after the dump."
+  type        = string
+  default     = "2026-11-01T00:00:00Z"
 }
 
 variable "turbopuffer_region" {
