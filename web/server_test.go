@@ -118,6 +118,10 @@ func TestWikipediaSearchAPI(t *testing.T) {
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
 		queries <- body
 		writer.Header().Set("Content-Type", "application/json")
+		if _, ok := body["queries"]; ok {
+			_, _ = writer.Write([]byte(`{"results":[{"rows":[{"id":"26903","title":"Solar System","url":"https://en.wikipedia.org/wiki/Solar_System","$dist":2.5,"excerpt":[{"text":"The Solar System is gravitationally bound."}]}]}]}`))
+			return
+		}
 		_, _ = writer.Write([]byte(`{"rows":[{"id":"26903","title":"Solar System","url":"https://en.wikipedia.org/wiki/Solar_System","$dist":2.5,"excerpt":[{"text":"The Solar System is gravitationally bound."}]}]}`))
 	}))
 	defer upstream.Close()
@@ -143,7 +147,11 @@ func TestWikipediaSearchAPI(t *testing.T) {
 	require.JSONEq(t, `{"pages":[{"id":26903,"key":"Solar_System","title":"Solar System","excerpt":"The Solar System is gravitationally bound.","matched_title":null,"anchor":null,"description":null,"thumbnail":null}]}`, response.Body.String())
 	pageQuery := <-queries
 	require.Equal(t, float64(1), pageQuery["limit"])
-	require.Contains(t, pageQuery, "compute_attributes")
+	require.Equal(t, []any{"RRF"}, pageQuery["rerank_by"])
+	subqueries := pageQuery["queries"].([]any)
+	require.Len(t, subqueries, 2)
+	require.Contains(t, subqueries[0].(map[string]any), "compute_attributes")
+	require.Contains(t, subqueries[1].(map[string]any), "compute_attributes")
 }
 
 func TestWikipediaSearchAPIValidation(t *testing.T) {

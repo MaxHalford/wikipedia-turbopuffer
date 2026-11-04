@@ -201,23 +201,37 @@ func (c *SearchClient) Stats(ctx context.Context, now time.Time) (Stats, error) 
 }
 
 func (c *SearchClient) Search(ctx context.Context, query string, limit int) ([]Result, error) {
+	includeAttributes := []string{"title", "url", "updated_at"}
+	computeAttributes := map[string]any{
+		"excerpt": []any{"Highlight", "text", map[string]any{
+			"fragment_by":     "sentence",
+			"fragment_limit":  1,
+			"include_offsets": "utf-8",
+		}},
+	}
 	payload := map[string]any{
-		"rank_by": []any{
-			"Sum",
-			[]any{
-				[]any{"Product", 2.0, []any{"title", "BM25", query}},
-				[]any{"text", "BM25", query},
+		"queries": []any{
+			map[string]any{
+				"rank_by":            []any{"text", "ANN", []any{"Embed", query}},
+				"limit":              100,
+				"include_attributes": includeAttributes,
+				"compute_attributes": computeAttributes,
+			},
+			map[string]any{
+				"rank_by": []any{
+					"Sum",
+					[]any{
+						[]any{"Product", 2.0, []any{"title", "BM25", query}},
+						[]any{"text", "BM25", query},
+					},
+				},
+				"limit":              100,
+				"include_attributes": includeAttributes,
+				"compute_attributes": computeAttributes,
 			},
 		},
-		"limit":              limit,
-		"include_attributes": []string{"title", "url", "updated_at"},
-		"compute_attributes": map[string]any{
-			"excerpt": []any{"Highlight", "text", map[string]any{
-				"fragment_by":     "sentence",
-				"fragment_limit":  1,
-				"include_offsets": "utf-8",
-			}},
-		},
+		"rerank_by": []any{"RRF"},
+		"limit":     limit,
 	}
 	return c.query(ctx, payload)
 }
@@ -255,25 +269,33 @@ func (c *SearchClient) query(ctx context.Context, payload map[string]any) ([]Res
 		return nil, fmt.Errorf("turbopuffer returned %s: %s", response.Status, strings.TrimSpace(string(message)))
 	}
 
+	type queryRow struct {
+		ID        any     `json:"id"`
+		Title     string  `json:"title"`
+		URL       string  `json:"url"`
+		UpdatedAt string  `json:"updated_at"`
+		Score     float64 `json:"$dist"`
+		Excerpt   []struct {
+			Text          string  `json:"text"`
+			FragmentRange []int   `json:"fragment_range"`
+			MatchRanges   [][]int `json:"match_ranges"`
+		} `json:"excerpt"`
+	}
 	var decoded struct {
-		Rows []struct {
-			ID        any     `json:"id"`
-			Title     string  `json:"title"`
-			URL       string  `json:"url"`
-			UpdatedAt string  `json:"updated_at"`
-			Score     float64 `json:"$dist"`
-			Excerpt   []struct {
-				Text          string  `json:"text"`
-				FragmentRange []int   `json:"fragment_range"`
-				MatchRanges   [][]int `json:"match_ranges"`
-			} `json:"excerpt"`
-		} `json:"rows"`
+		Rows    []queryRow `json:"rows"`
+		Results []struct {
+			Rows []queryRow `json:"rows"`
+		} `json:"results"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("decode turbopuffer response: %w", err)
 	}
-	results := make([]Result, 0, len(decoded.Rows))
-	for _, row := range decoded.Rows {
+	rows := decoded.Rows
+	if len(decoded.Results) > 0 {
+		rows = decoded.Results[0].Rows
+	}
+	results := make([]Result, 0, len(rows))
+	for _, row := range rows {
 		excerpt, excerptHTML := "", template.HTML("")
 		if len(row.Excerpt) > 0 {
 			excerpt = strings.Join(strings.Fields(row.Excerpt[0].Text), " ")

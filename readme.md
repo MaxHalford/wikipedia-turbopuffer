@@ -4,7 +4,9 @@ A small live English Wikipedia search stack built with
 [Redpanda Connect](https://docs.redpanda.com/redpanda-connect/) and
 [turbopuffer](https://turbopuffer.com). It consumes Wikimedia recent-change
 events, writes searchable article text to turbopuffer, and serves a minimal Go
-search site with no external browser assets.
+search site with no external browser assets. Page search combines BM25 full-text
+search with native `nvidia/nemotron-3.5-embed-1b` embeddings and fuses both
+rankings with reciprocal rank fusion.
 
 Try the deployed site at
 [wikipedia-web-cfscc6ofha-uc.a.run.app](https://wikipedia-web-cfscc6ofha-uc.a.run.app).
@@ -25,8 +27,8 @@ contact address.
 Create an ignored `.env` file:
 
 ```dotenv
-TURBOPUFFER_READ_API_KEY=tpuf_...
-TURBOPUFFER_WRITE_API_KEY=tpuf_...
+TURBOPUFFER_API_READ_KEY=tpuf_...
+TURBOPUFFER_API_WRITE_KEY=tpuf_...
 TURBOPUFFER_REGION=gcp-us-central1
 TURBOPUFFER_NAMESPACE=wikipedia-en-live
 WIKIMEDIA_USER_AGENT=wikipedia-turbopuffer/0.1 (mailto:you@example.com)
@@ -40,7 +42,7 @@ Start the live ingester:
 set -a
 source .env
 set +a
-TURBOPUFFER_API_KEY="$TURBOPUFFER_WRITE_API_KEY" \
+TURBOPUFFER_API_KEY="$TURBOPUFFER_API_WRITE_KEY" \
   go run . -c config/wikipedia.yaml
 ```
 
@@ -50,7 +52,7 @@ Start the web service in another terminal:
 set -a
 source .env
 set +a
-TURBOPUFFER_API_KEY="$TURBOPUFFER_READ_API_KEY" go run ./cmd/wikipedia-web
+TURBOPUFFER_API_KEY="$TURBOPUFFER_API_READ_KEY" go run ./cmd/wikipedia-web
 ```
 
 Open <http://localhost:8080>. A successful ingester starts an HTTP listener and
@@ -64,18 +66,21 @@ CirrusSearch content dump:
 
 ```bash
 export WIKIPEDIA_DUMP_URL='https://dumps.wikimedia.org/other/cirrus_search_index/DATE/index_name%3Denwiki_content/SHARD.json.bz2'
-TURBOPUFFER_API_KEY="$TURBOPUFFER_WRITE_API_KEY" \
+TURBOPUFFER_API_KEY="$TURBOPUFFER_API_WRITE_KEY" \
   go run . -c config/wikipedia-backfill.yaml
 ```
 
 Run one process per shard. The pipeline streams and decompresses each file, so
 it does not load a complete dump into memory. The output bypasses turbopuffer's
-indexing-backlog guard during this controlled bulk load.
+indexing-backlog guard during this controlled bulk load. Native embeddings are
+created as each document is written. Adding an embedding schema to an existing
+namespace does not embed rows already stored there, so enable embeddings in a
+new namespace and backfill it before cutover.
 
 After the dump completes, reconcile every page that changed after the snapshot:
 
 ```bash
-TURBOPUFFER_API_KEY="$TURBOPUFFER_WRITE_API_KEY" \
+TURBOPUFFER_API_KEY="$TURBOPUFFER_API_WRITE_KEY" \
   WIKIPEDIA_CATCHUP_START=2026-11-01T00:00:00Z \
   go run . wikipedia-catchup
 ```
@@ -114,8 +119,15 @@ terraform -chdir=terraform apply \
   -var='project_id=YOUR_PROJECT' \
   -var='web_image=REGISTRY/wikipedia-web:COMMIT' \
   -var='ingester_image=REGISTRY/wikipedia-ingester:COMMIT' \
+  -var='job_image=REGISTRY/wikipedia-ingester:COMMIT' \
+  -var='job_write_api_key_secret=YOUR_BACKFILL_WRITE_SECRET' \
+  -var='turbopuffer_backfill_namespace=YOUR_HYBRID_NAMESPACE' \
   -var='wikimedia_user_agent=wikipedia-turbopuffer/0.1 (mailto:you@example.com)'
 ```
+
+The separate job image and write secret let a new namespace backfill in a new
+turbopuffer account while the live service continues to use its current image,
+secret, and namespace.
 
 Terraform prints the public Cloud Run URL and both job names. Run a one-shard
 canary before you start the complete dump:
