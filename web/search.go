@@ -47,6 +47,14 @@ type SearchResponse struct {
 	ElapsedMS int64    `json:"elapsed_ms"`
 }
 
+type SearchMode string
+
+const (
+	SearchModeHybrid   SearchMode = "hybrid"
+	SearchModeKeyword  SearchMode = "keyword"
+	SearchModeSemantic SearchMode = "semantic"
+)
+
 func NewSearchClient(apiKey, region, baseURL, namespace string) (*SearchClient, error) {
 	if apiKey == "" {
 		return nil, errors.New("TURBOPUFFER_API_KEY must not be empty")
@@ -201,37 +209,54 @@ func (c *SearchClient) Stats(ctx context.Context, now time.Time) (Stats, error) 
 }
 
 func (c *SearchClient) Search(ctx context.Context, query string, limit int) ([]Result, error) {
+	return c.SearchWithMode(ctx, query, limit, SearchModeHybrid)
+}
+
+func (c *SearchClient) SearchWithMode(ctx context.Context, query string, limit int, mode SearchMode) ([]Result, error) {
 	includeAttributes := []string{"title", "url", "updated_at"}
 	computeAttributes := map[string]any{
 		"excerpt": []any{"Highlight", "text", map[string]any{
-			"fragment_by":     "sentence",
-			"fragment_limit":  1,
-			"include_offsets": "utf-8",
+			"fragment_by":       "sentence",
+			"rank_fragments_by": []any{"$fragment", "BM25", query},
+			"fragment_limit":    1,
+			"include_offsets":   "utf-8",
 		}},
 	}
-	payload := map[string]any{
-		"queries": []any{
-			map[string]any{
-				"rank_by":            []any{"text", "ANN", []any{"Embed", query}},
-				"limit":              100,
-				"include_attributes": includeAttributes,
-				"compute_attributes": computeAttributes,
-			},
-			map[string]any{
-				"rank_by": []any{
-					"Sum",
-					[]any{
-						[]any{"Product", 2.0, []any{"title", "BM25", query}},
-						[]any{"text", "BM25", query},
-					},
-				},
-				"limit":              100,
-				"include_attributes": includeAttributes,
-				"compute_attributes": computeAttributes,
+	vectorQuery := map[string]any{
+		"rank_by":            []any{"text", "ANN", []any{"Embed", query}},
+		"limit":              limit,
+		"include_attributes": includeAttributes,
+		"compute_attributes": computeAttributes,
+	}
+	keywordQuery := map[string]any{
+		"rank_by": []any{
+			"Sum",
+			[]any{
+				[]any{"Product", 2.0, []any{"title", "BM25", query}},
+				[]any{"text", "BM25", query},
 			},
 		},
-		"rerank_by": []any{"RRF"},
-		"limit":     limit,
+		"limit":              limit,
+		"include_attributes": includeAttributes,
+		"compute_attributes": computeAttributes,
+	}
+
+	var payload map[string]any
+	switch mode {
+	case SearchModeKeyword:
+		payload = keywordQuery
+	case SearchModeSemantic:
+		payload = vectorQuery
+	case SearchModeHybrid:
+		vectorQuery["limit"] = 100
+		keywordQuery["limit"] = 100
+		payload = map[string]any{
+			"queries":   []any{vectorQuery, keywordQuery},
+			"rerank_by": []any{"RRF"},
+			"limit":     limit,
+		}
+	default:
+		return nil, fmt.Errorf("unsupported search mode %q", mode)
 	}
 	return c.query(ctx, payload)
 }

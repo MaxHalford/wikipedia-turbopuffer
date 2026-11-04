@@ -55,6 +55,7 @@ func TestSearchClient(t *testing.T) {
 	require.Contains(t, ftsQuery, "rank_by")
 	excerpt := vectorQuery["compute_attributes"].(map[string]any)["excerpt"].([]any)
 	require.Equal(t, "utf-8", excerpt[2].(map[string]any)["include_offsets"])
+	require.Equal(t, []any{"$fragment", "BM25", "puffer fish"}, excerpt[2].(map[string]any)["rank_fragments_by"])
 
 	results, err = client.SearchTitles(t.Context(), "puffer f", 8)
 	require.NoError(t, err)
@@ -70,6 +71,44 @@ func TestSearchClient(t *testing.T) {
 		"puffer f",
 		map[string]any{"last_as_prefix": true},
 	}, request["rank_by"])
+}
+
+func TestSearchClientModes(t *testing.T) {
+	requests := make(chan map[string]any, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+		requests <- body
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"rows":[]}`))
+	}))
+	defer server.Close()
+	client, err := NewSearchClient("tpuf_test", "", server.URL, "wikipedia-test")
+	require.NoError(t, err)
+
+	_, err = client.SearchWithMode(t.Context(), "puffer fish", 7, SearchModeKeyword)
+	require.NoError(t, err)
+	keyword := <-requests
+	require.Equal(t, float64(7), keyword["limit"])
+	require.NotContains(t, keyword, "queries")
+	require.Equal(t, "Sum", keyword["rank_by"].([]any)[0])
+
+	_, err = client.SearchWithMode(t.Context(), "puffer fish", 7, SearchModeSemantic)
+	require.NoError(t, err)
+	semantic := <-requests
+	require.Equal(t, float64(7), semantic["limit"])
+	require.NotContains(t, semantic, "queries")
+	require.Equal(t, []any{"text", "ANN", []any{"Embed", "puffer fish"}}, semantic["rank_by"])
+
+	_, err = client.SearchWithMode(t.Context(), "puffer fish", 7, SearchModeHybrid)
+	require.NoError(t, err)
+	hybrid := <-requests
+	require.Equal(t, float64(7), hybrid["limit"])
+	require.Len(t, hybrid["queries"], 2)
+	require.Equal(t, []any{"RRF"}, hybrid["rerank_by"])
+
+	_, err = client.SearchWithMode(t.Context(), "puffer fish", 7, SearchMode("unknown"))
+	require.ErrorContains(t, err, `unsupported search mode "unknown"`)
 }
 
 func TestSearchClientEscapesHighlightHTML(t *testing.T) {

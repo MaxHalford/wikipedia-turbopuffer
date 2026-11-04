@@ -67,6 +67,10 @@ func TestServerSearchAPIAndPage(t *testing.T) {
 	require.Contains(t, response.Body.String(), "https://github.com/MaxHalford/wikipedia-turbopuffer")
 	require.Contains(t, response.Body.String(), "/w/rest.php/v1/search/title?q=solar&amp;limit=5")
 	require.Contains(t, response.Body.String(), "/w/rest.php/v1/search/page?q=solar&amp;limit=5")
+	require.Contains(t, response.Body.String(), "/api/search?q=solar&amp;mode=hybrid")
+	require.Contains(t, response.Body.String(), `<fieldset class="search-modes" aria-label="Search mode">`)
+	require.Contains(t, response.Body.String(), `<input type="radio" name="mode" value="hybrid" checked><span>hybrid</span>`)
+	require.Contains(t, response.Body.String(), "modes.forEach(mode=>mode.addEventListener('change',search))")
 	require.NotContains(t, response.Body.String(), "Powered by turbopuffer")
 }
 
@@ -109,6 +113,12 @@ func TestServerRejectsInvalidQuery(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	require.Equal(t, http.StatusBadRequest, response.Code)
+
+	request = httptest.NewRequest(http.MethodGet, "/api/search?q=puffer&mode=fuzzy", nil)
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.JSONEq(t, `{"error":"mode must be keyword, semantic, or hybrid"}`, response.Body.String())
 }
 
 func TestWikipediaSearchAPI(t *testing.T) {

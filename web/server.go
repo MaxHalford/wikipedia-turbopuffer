@@ -29,6 +29,7 @@ type Server struct {
 
 type pageData struct {
 	Query    string
+	Mode     string
 	Response SearchResponse
 	Error    string
 }
@@ -242,12 +243,15 @@ func writeWikipediaSearchError(writer http.ResponseWriter) {
 
 func (s *Server) handlePage(writer http.ResponseWriter, request *http.Request) {
 	query, ok := validQuery(request.URL.Query().Get("q"))
-	data := pageData{Query: query}
+	mode, modeOK := validSearchMode(request.URL.Query().Get("mode"))
+	data := pageData{Query: query, Mode: string(mode)}
 	if !ok {
 		data.Error = "Searches must contain at most 300 characters."
+	} else if !modeOK {
+		data.Error = "Search mode must be keyword, semantic, or hybrid."
 	} else if query != "" {
 		started := time.Now()
-		results, err := s.client.Search(request.Context(), query, 12)
+		results, err := s.client.SearchWithMode(request.Context(), query, 12, mode)
 		if err != nil {
 			s.logger.Error("search failed", "error", err)
 			data.Error = "Search is temporarily unavailable."
@@ -268,6 +272,11 @@ func (s *Server) handleSearch(writer http.ResponseWriter, request *http.Request)
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "q must contain 1 to 300 characters"})
 		return
 	}
+	mode, ok := validSearchMode(request.URL.Query().Get("mode"))
+	if !ok {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "mode must be keyword, semantic, or hybrid"})
+		return
+	}
 	select {
 	case s.searchSlots <- struct{}{}:
 		defer func() { <-s.searchSlots }()
@@ -277,7 +286,7 @@ func (s *Server) handleSearch(writer http.ResponseWriter, request *http.Request)
 	}
 
 	started := time.Now()
-	results, err := s.client.Search(request.Context(), query, 12)
+	results, err := s.client.SearchWithMode(request.Context(), query, 12, mode)
 	if err != nil {
 		s.logger.Error("search failed", "error", err)
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "search is temporarily unavailable"})
@@ -293,6 +302,19 @@ func (s *Server) handleSearch(writer http.ResponseWriter, request *http.Request)
 func validQuery(raw string) (string, bool) {
 	query := strings.TrimSpace(raw)
 	return query, len([]rune(query)) <= 300
+}
+
+func validSearchMode(raw string) (SearchMode, bool) {
+	if raw == "" {
+		return SearchModeHybrid, true
+	}
+	mode := SearchMode(raw)
+	switch mode {
+	case SearchModeKeyword, SearchModeSemantic, SearchModeHybrid:
+		return mode, true
+	default:
+		return SearchModeHybrid, false
+	}
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {
