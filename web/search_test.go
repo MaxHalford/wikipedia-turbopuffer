@@ -20,6 +20,10 @@ func TestSearchClient(t *testing.T) {
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
 		requests <- body
 		writer.Header().Set("Content-Type", "application/json")
+		if _, ok := body["queries"]; ok {
+			_, _ = writer.Write([]byte(`{"results":[{"rows":[{"id":"42","title":"Pufferfish","url":"https://en.wikipedia.org/wiki/Pufferfish","updated_at":"2026-11-04T10:00:00Z","$dist":1.25,"excerpt":[{"text":"Pufferfish are toxic fish.","fragment_range":[120,140],"match_ranges":[[120,130]]}]}]}]}`))
+			return
+		}
 		_, _ = writer.Write([]byte(`{"rows":[{"id":"42","title":"Pufferfish","url":"https://en.wikipedia.org/wiki/Pufferfish","updated_at":"2026-11-04T10:00:00Z","$dist":1.25,"excerpt":[{"text":"Pufferfish are toxic fish.","fragment_range":[120,140],"match_ranges":[[120,130]]}]}]}`))
 	}))
 	defer server.Close()
@@ -40,9 +44,16 @@ func TestSearchClient(t *testing.T) {
 
 	request := <-requests
 	require.Equal(t, float64(12), request["limit"])
-	require.Contains(t, request, "rank_by")
-	require.Contains(t, request, "compute_attributes")
-	excerpt := request["compute_attributes"].(map[string]any)["excerpt"].([]any)
+	require.Equal(t, []any{"RRF"}, request["rerank_by"])
+	queries := request["queries"].([]any)
+	require.Len(t, queries, 2)
+	vectorQuery := queries[0].(map[string]any)
+	require.Equal(t, []any{"text", "ANN", []any{"Embed", "puffer fish"}}, vectorQuery["rank_by"])
+	require.Equal(t, float64(100), vectorQuery["limit"])
+	ftsQuery := queries[1].(map[string]any)
+	require.Equal(t, float64(100), ftsQuery["limit"])
+	require.Contains(t, ftsQuery, "rank_by")
+	excerpt := vectorQuery["compute_attributes"].(map[string]any)["excerpt"].([]any)
 	require.Equal(t, "utf-8", excerpt[2].(map[string]any)["include_offsets"])
 
 	results, err = client.SearchTitles(t.Context(), "puffer f", 8)

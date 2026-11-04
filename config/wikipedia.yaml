@@ -68,6 +68,7 @@ output:
     region: ${TURBOPUFFER_REGION:gcp-us-central1}
     base_url: '${TURBOPUFFER_BASE_URL:}'
     namespace: ${TURBOPUFFER_NAMESPACE:wikipedia-en-live}
+    distance_metric: cosine_distance
     schema:
       title:
         type: string
@@ -77,6 +78,10 @@ output:
         type: string
         full_text_search: true
         filterable: false
+        embed:
+          model: nvidia/nemotron-3.5-embed-1b
+          dims: 1024
+          dtype: f16
       url:
         type: string
         filterable: false

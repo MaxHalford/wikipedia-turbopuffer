@@ -91,6 +91,18 @@ func TestWikipediaPipeline(t *testing.T) {
 			"Lt",
 			map[string]any{"$ref_new": "revision_id"},
 		}, body["upsert_condition"])
+		require.Equal(t, "cosine_distance", body["distance_metric"])
+		schema := body["schema"].(map[string]any)
+		require.Equal(t, map[string]any{
+			"type":             "string",
+			"full_text_search": true,
+			"filterable":       false,
+			"embed": map[string]any{
+				"model": "nvidia/nemotron-3.5-embed-1b",
+				"dims":  float64(1024),
+				"dtype": "f16",
+			},
+		}, schema["text"])
 		require.Zero(t, canaryRequests.Load())
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the Wikipedia pipeline")

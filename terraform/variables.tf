@@ -20,6 +20,12 @@ variable "ingester_image" {
   type        = string
 }
 
+variable "job_image" {
+  description = "The immutable image used by the backfill and catch-up jobs. Defaults to the live ingester image."
+  type        = string
+  default     = null
+}
+
 variable "query_api_key_secret" {
   description = "The Secret Manager secret with a query-only turbopuffer key."
   type        = string
@@ -28,6 +34,12 @@ variable "query_api_key_secret" {
 
 variable "write_api_key_secret" {
   description = "The Secret Manager secret with a turbopuffer ingestion key that can query and write."
+  type        = string
+  default     = "wikipedia-turbopuffer-write-api-key"
+}
+
+variable "job_write_api_key_secret" {
+  description = "The Secret Manager secret used by the backfill and catch-up jobs."
   type        = string
   default     = "wikipedia-turbopuffer-write-api-key"
 }

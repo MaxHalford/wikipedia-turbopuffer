@@ -22,6 +22,7 @@ const (
 	fieldBaseURL             = "base_url"
 	fieldBatching            = "batching"
 	fieldDisableBackpressure = "disable_backpressure"
+	fieldDistanceMetric      = "distance_metric"
 	fieldMaxInFlight         = "max_in_flight"
 	fieldNamespace           = "namespace"
 	fieldNewerThan           = "newer_than"
@@ -60,6 +61,9 @@ func turbopufferSpec() *service.ConfigSpec {
 			service.NewBoolField(fieldDisableBackpressure).
 				Description("Bypass indexing-backlog write protection for controlled bulk loads.").
 				Default(false),
+			service.NewStringField(fieldDistanceMetric).
+				Description("The distance metric for vector attributes: cosine_distance or euclidean_squared.").
+				Default(""),
 			service.NewStringField(fieldNewerThan).
 				Description("Only replace an existing document when this attribute is smaller in the stored document.").
 				Default(""),
@@ -134,6 +138,13 @@ func newTurbopufferOutput(conf *service.ParsedConfig, _ *service.Resources) (ser
 	if disableBackpressure && newerThan != "" {
 		return nil, policy, 0, errors.New("newer_than cannot be combined with disable_backpressure")
 	}
+	distanceMetric, err := conf.FieldString(fieldDistanceMetric)
+	if err != nil {
+		return nil, policy, 0, err
+	}
+	if distanceMetric != "" && distanceMetric != "cosine_distance" && distanceMetric != "euclidean_squared" {
+		return nil, policy, 0, errors.New("distance_metric must be cosine_distance or euclidean_squared")
+	}
 
 	timeout, err := conf.FieldDuration(fieldTimeout)
 	if err != nil {
@@ -153,6 +164,7 @@ func newTurbopufferOutput(conf *service.ParsedConfig, _ *service.Resources) (ser
 	return &turbopufferOutput{
 		apiKey:              apiKey,
 		disableBackpressure: disableBackpressure,
+		distanceMetric:      distanceMetric,
 		endpoint:            baseURL + "/v2/namespaces/" + url.PathEscape(namespace),
 		newerThan:           newerThan,
 		schema:              schema,
@@ -177,6 +189,7 @@ func validateBaseURL(raw string) (string, error) {
 type turbopufferOutput struct {
 	apiKey              string
 	disableBackpressure bool
+	distanceMetric      string
 	endpoint            string
 	newerThan           string
 	schema              map[string]any
@@ -201,10 +214,12 @@ func (t *turbopufferOutput) WriteBatch(ctx context.Context, messages service.Mes
 		UpsertCondition     any              `json:"upsert_condition,omitempty"`
 		Schema              map[string]any   `json:"schema,omitempty"`
 		DisableBackpressure bool             `json:"disable_backpressure,omitempty"`
+		DistanceMetric      string           `json:"distance_metric,omitempty"`
 	}{
 		UpsertRows:          rows,
 		Schema:              t.schema,
 		DisableBackpressure: t.disableBackpressure,
+		DistanceMetric:      t.distanceMetric,
 	}
 	if t.newerThan != "" {
 		payload.UpsertCondition = []any{

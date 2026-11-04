@@ -6,6 +6,14 @@ data "google_secret_manager_secret" "write_api_key" {
   secret_id = var.write_api_key_secret
 }
 
+data "google_secret_manager_secret" "job_write_api_key" {
+  secret_id = var.job_write_api_key_secret
+}
+
+locals {
+  job_image = coalesce(var.job_image, var.ingester_image)
+}
+
 resource "google_service_account" "web" {
   account_id   = "wikipedia-web"
   display_name = "Wikipedia search web"
@@ -24,6 +32,12 @@ resource "google_secret_manager_secret_iam_member" "web_query_api_key" {
 
 resource "google_secret_manager_secret_iam_member" "ingester_write_api_key" {
   secret_id = data.google_secret_manager_secret.write_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ingester.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "ingester_job_write_api_key" {
+  secret_id = data.google_secret_manager_secret.job_write_api_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.ingester.email}"
 }
@@ -205,11 +219,11 @@ resource "google_cloud_run_v2_job" "backfill" {
 
     template {
       service_account = google_service_account.ingester.email
-      timeout         = "14400s"
+      timeout         = "604800s"
       max_retries     = 2
 
       containers {
-        image = var.ingester_image
+        image = local.job_image
         args  = ["-c", "/backfill.yaml"]
 
         resources {
@@ -243,7 +257,7 @@ resource "google_cloud_run_v2_job" "backfill" {
           name = "TURBOPUFFER_API_KEY"
           value_source {
             secret_key_ref {
-              secret  = data.google_secret_manager_secret.write_api_key.secret_id
+              secret  = data.google_secret_manager_secret.job_write_api_key.secret_id
               version = "latest"
             }
           }
@@ -252,7 +266,7 @@ resource "google_cloud_run_v2_job" "backfill" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.ingester_write_api_key]
+  depends_on = [google_secret_manager_secret_iam_member.ingester_job_write_api_key]
 }
 
 resource "google_cloud_run_v2_job" "catchup" {
@@ -266,11 +280,11 @@ resource "google_cloud_run_v2_job" "catchup" {
 
     template {
       service_account = google_service_account.ingester.email
-      timeout         = "7200s"
+      timeout         = "86400s"
       max_retries     = 1
 
       containers {
-        image = var.ingester_image
+        image = local.job_image
         args  = ["wikipedia-catchup"]
 
         resources {
@@ -304,7 +318,7 @@ resource "google_cloud_run_v2_job" "catchup" {
           name = "TURBOPUFFER_API_KEY"
           value_source {
             secret_key_ref {
-              secret  = data.google_secret_manager_secret.write_api_key.secret_id
+              secret  = data.google_secret_manager_secret.job_write_api_key.secret_id
               version = "latest"
             }
           }
@@ -313,5 +327,5 @@ resource "google_cloud_run_v2_job" "catchup" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.ingester_write_api_key]
+  depends_on = [google_secret_manager_secret_iam_member.ingester_job_write_api_key]
 }
