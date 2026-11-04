@@ -51,7 +51,7 @@ pipeline:
               parallel: true
         result_map: root = this
     - mapping: |
-        root.id = this.id.string()
+        root.id = "%v".format(this.id)
         root.title = this.title
         root.text = this.html.html_to_text()
         root.url = "https://en.wikipedia.org/wiki/" + this.key.escape_url_path()

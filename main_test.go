@@ -25,7 +25,7 @@ func TestWikipediaPipeline(t *testing.T) {
 	pageServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		require.Equal(t, "/page/Test%20Article/with_html", request.URL.EscapedPath())
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(writer, `{"id":42,"key":"Test_Article","title":"Test Article","latest":{"id":12,"timestamp":"2026-11-04T10:00:00Z"},"html":"<h1>Test Article</h1><p>Hello <strong>world</strong>.</p>"}`)
+		_, _ = fmt.Fprint(writer, `{"id":11250397,"key":"Test_Article","title":"Test Article","latest":{"id":12,"timestamp":"2026-11-04T10:00:00Z"},"html":"<h1>Test Article</h1><p>Hello <strong>world</strong>.</p>"}`)
 	}))
 	defer pageServer.Close()
 
@@ -65,7 +65,7 @@ func TestWikipediaPipeline(t *testing.T) {
 	case body := <-writes:
 		rows := body["upsert_rows"].([]any)
 		require.Equal(t, map[string]any{
-			"id":          "42",
+			"id":          "11250397",
 			"revision_id": float64(12),
 			"text":        "Test Article Hello world.",
 			"title":       "Test Article",
