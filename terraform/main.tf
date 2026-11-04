@@ -244,6 +244,11 @@ resource "google_cloud_run_v2_job" "backfill" {
         }
 
         env {
+          name  = "TURBOPUFFER_MAX_IN_FLIGHT"
+          value = tostring(var.turbopuffer_backfill_max_in_flight)
+        }
+
+        env {
           name  = "WIKIPEDIA_DUMP_DATE"
           value = var.wikipedia_dump_date
         }

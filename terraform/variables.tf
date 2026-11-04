@@ -80,6 +80,12 @@ variable "wikipedia_backfill_parallelism" {
   default     = 8
 }
 
+variable "turbopuffer_backfill_max_in_flight" {
+  description = "The maximum number of concurrent turbopuffer writes per dump worker."
+  type        = number
+  default     = 1
+}
+
 variable "wikipedia_catchup_start" {
   description = "The earliest revision timestamp to reconcile after the dump."
   type        = string
