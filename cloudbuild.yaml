@@ -1,0 +1,18 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=Dockerfile.web
+      - --tag=us-central1-docker.pkg.dev/$PROJECT_ID/dataeng/wikipedia-web:${_TAG}
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=Dockerfile
+      - --tag=us-central1-docker.pkg.dev/$PROJECT_ID/dataeng/wikipedia-ingester:${_TAG}
+      - .
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/dataeng/wikipedia-web:${_TAG}
+  - us-central1-docker.pkg.dev/$PROJECT_ID/dataeng/wikipedia-ingester:${_TAG}
+substitutions:
+  _TAG: manual

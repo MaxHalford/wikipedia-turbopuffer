@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Search English Wikipedia with turbopuffer.">
+  <title>{{if .Query}}{{.Query}} · {{end}}Wikipedia search · turbopuffer</title>
+  <style>
+    :root{--ink:#0f172a;--paper:#f8fafc;--muted:#64748b;--line:#cbd5e1;--orange:#fdba74;--orange-ink:#7c2d12;color-scheme:light}
+    *{box-sizing:border-box}
+    html{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:var(--paper);color:var(--ink);text-rendering:optimizeLegibility}
+    body{margin:0;min-height:100vh}
+    main{display:flex;flex-direction:column;width:min(760px,calc(100% - 32px));min-height:100vh;margin:0 auto;padding:clamp(40px,9vh,96px) 0 64px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:clamp(42px,8vh,72px);font-size:12px}
+    .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.03em}.mark{width:13px;height:13px;background:var(--orange);border:2px solid var(--ink);box-shadow:3px 3px 0 var(--ink)}
+    .header-actions{display:flex;align-items:center;gap:18px}
+    .live{display:flex;align-items:center;gap:7px;color:var(--muted)}.live:before{content:"";width:6px;height:6px;background:#16a34a;border-radius:50%}
+    .about-button{border:0;border-bottom:1px solid var(--ink);padding:2px 0;background:transparent;color:var(--ink);font:inherit;cursor:pointer}.about-button:hover{background:var(--orange)}
+    form{display:flex;position:relative;margin-bottom:22px}
+    input{width:100%;border:2px solid var(--ink);background:#fff;border-radius:0;padding:17px 52px 17px 17px;font:inherit;font-size:16px;outline:none;box-shadow:6px 6px 0 var(--ink);appearance:none}
+    input:focus{box-shadow:6px 6px 0 var(--orange)}
+    form button{position:absolute;right:2px;top:2px;bottom:2px;width:50px;border:0;border-left:1px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-size:19px;cursor:pointer}form button:hover{background:var(--orange)}
+    .meta{min-height:20px;color:var(--muted);font-size:11px;margin:0 0 30px}.meta strong{color:var(--ink)}
+    #status[aria-busy="true"]:after{content:"searching…"}
+    ol{list-style:none;padding:0;margin:0}ol:not(:empty){border-top:1px solid var(--line)}
+    li{padding:22px 0;border-bottom:1px solid var(--line)}
+    .result-title{display:inline;color:var(--ink);font-size:17px;font-weight:700;line-height:1.35;text-decoration-thickness:1px;text-underline-offset:4px}.result-title:hover{background:var(--orange)}
+    .url{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:10px;margin:7px 0 10px;text-decoration:none}
+    .excerpt{font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1.58;color:#334155;margin:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+    .empty{border:1px dashed var(--line);padding:24px;color:var(--muted);font-size:12px}
+    footer{margin-top:auto;padding-top:60px;display:flex;justify-content:space-between;gap:18px;color:var(--muted);font-size:9px;line-height:1.5}footer a{color:inherit}footer a:hover{color:var(--orange-ink);background:var(--orange)}
+    dialog{width:min(600px,calc(100% - 32px));border:2px solid var(--ink);border-radius:0;padding:0;background:var(--paper);color:var(--ink);box-shadow:8px 8px 0 var(--ink)}dialog::backdrop{background:rgba(15,23,42,.32)}
+    .modal-inner{padding:28px}.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}.modal-header h2{margin:0;font-size:16px}.modal-close{border:1px solid var(--ink);padding:5px 8px;background:#fff;color:var(--ink);font:inherit;font-size:12px;cursor:pointer}.modal-close:hover{background:var(--orange)}
+    .modal-copy{font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1.55;color:#334155}.modal-copy p{margin:0 0 20px}.modal-label{margin:0 0 8px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.api-endpoint{display:block;overflow-x:auto;margin:0 0 10px;border:1px solid var(--line);background:#fff;padding:11px 12px;color:var(--ink);font:11px/1.5 "JetBrains Mono",ui-monospace,monospace;white-space:nowrap}
+    ::selection{background:var(--orange);color:var(--orange-ink)}
+    @media(max-width:560px){main{width:min(100% - 24px,760px);padding-top:28px}header{margin-bottom:48px}.header-actions{gap:12px}.live span{display:none}input{font-size:16px}footer{display:block}footer>span{display:block;margin-top:8px}.modal-inner{padding:22px 18px}}
+    @media(prefers-reduced-motion:no-preference){li{animation:appear .18s ease both}@keyframes appear{from{opacity:0;transform:translateY(3px)}}}
+  </style>
+</head>
+<body>
+  <main>
+    <header><div class="brand"><span class="mark" aria-hidden="true"></span>turbopuffer × wikipedia</div><div class="header-actions"><div class="live"><span>live updates</span></div><button class="about-button" id="about-open" type="button">about</button></div></header>
+    <form action="/" method="get" role="search">
+      <label for="q" hidden>Search English Wikipedia</label>
+      <input id="q" name="q" type="search" value="{{.Query}}" placeholder="Try “object storage”" maxlength="300" autocomplete="off" autofocus>
+      <button aria-label="Search" type="submit">↵</button>
+    </form>
+    <p class="meta" id="status" aria-live="polite">{{if .Error}}{{.Error}}{{else if .Query}}<strong>{{len .Response.Results}}</strong> results in {{.Response.ElapsedMS}}ms{{end}}</p>
+    <ol id="results">{{range .Response.Results}}<li><a class="result-title" href="{{.URL}}">{{.Title}}</a><a class="url" href="{{.URL}}">{{.URL}}</a>{{if .Excerpt}}<p class="excerpt">{{.Excerpt}}</p>{{end}}</li>{{else}}{{if .Query}}<li class="empty">No matching articles.</li>{{end}}{{end}}</ol>
+    <footer><div><a href="https://turbopuffer.com">turbopuffer.com</a> · <a href="mailto:max@turbopuffer.com">max@turbopuffer.com</a></div><span>Wikipedia content is available under its respective licenses.</span></footer>
+  </main>
+  <dialog id="about-dialog" aria-labelledby="about-title">
+    <div class="modal-inner">
+      <div class="modal-header"><h2 id="about-title">about</h2><button class="modal-close" id="about-close" type="button" aria-label="Close about dialog">close</button></div>
+      <div class="modal-copy">
+        <p>English Wikipedia articles, updated continuously with Redpanda Connect and searched with turbopuffer.</p>
+        <div class="modal-label">title search</div>
+        <code class="api-endpoint">GET /w/rest.php/v1/search/title?q=solar&amp;limit=5</code>
+        <div class="modal-label">page search</div>
+        <code class="api-endpoint">GET /w/rest.php/v1/search/page?q=solar&amp;limit=5</code>
+      </div>
+    </div>
+  </dialog>
+  <script>
+    const input=document.querySelector('#q'),results=document.querySelector('#results'),status=document.querySelector('#status'),about=document.querySelector('#about-dialog');let timer,controller;
+    const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const render=data=>{status.textContent=`${data.results.length} results in ${data.elapsed_ms}ms`;results.innerHTML=data.results.length?data.results.map(r=>`<li><a class="result-title" href="${esc(r.url)}">${esc(r.title)}</a><a class="url" href="${esc(r.url)}">${esc(r.url)}</a>${r.excerpt?`<p class="excerpt">${esc(r.excerpt)}</p>`:''}</li>`).join(''):'<li class="empty">No matching articles.</li>'};
+    document.querySelector('#about-open').addEventListener('click',()=>about.showModal());document.querySelector('#about-close').addEventListener('click',()=>about.close());about.addEventListener('click',event=>{if(event.target===about)about.close()});
+    input.addEventListener('input',()=>{clearTimeout(timer);const q=input.value.trim();if(!q){results.innerHTML='';status.textContent='';history.replaceState(null,'','/');return}timer=setTimeout(async()=>{controller?.abort();controller=new AbortController();status.textContent='';status.setAttribute('aria-busy','true');try{const res=await fetch(`/api/search?q=${encodeURIComponent(q)}`,{signal:controller.signal});const data=await res.json();if(!res.ok)throw Error(data.error);render(data);history.replaceState(null,'',`/?q=${encodeURIComponent(q)}`)}catch(e){if(e.name!=='AbortError')status.textContent='Search is temporarily unavailable.'}finally{status.removeAttribute('aria-busy')}},140)});
+  </script>
+</body>
+</html>

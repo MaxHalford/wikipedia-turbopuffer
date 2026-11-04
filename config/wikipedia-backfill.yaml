@@ -1,0 +1,73 @@
+http:
+  address: 0.0.0.0:${PORT:4195}
+
+input:
+  http_client:
+    url: ${WIKIPEDIA_DUMP_URL}
+    verb: GET
+    headers:
+      User-Agent: ${WIKIMEDIA_USER_AGENT}
+    timeout: 0s
+    stream:
+      enabled: true
+      reconnect: false
+      scanner:
+        decompress:
+          algorithm: bzip2
+          into:
+            lines:
+              max_buffer_size: 67108864
+              omit_empty: true
+
+pipeline:
+  processors:
+    - mapping: |
+        root = content().string().parse_json()
+    - mapping: |
+        root = if this.page_id != null &&
+          this.namespace == 0 &&
+          this.page_type == "primary" {
+          this
+        } else {
+          deleted()
+        }
+    - mapping: |
+        root.id = this.page_id.string()
+        root.title = this.title
+        root.text = this.text
+        root.url = "https://en.wikipedia.org/wiki/" + this.title.replace_all(" ", "_").escape_url_path()
+        root.revision_id = this.version
+        root.updated_at = this.timestamp
+
+output:
+  turbopuffer:
+    api_key: ${TURBOPUFFER_API_KEY}
+    region: ${TURBOPUFFER_REGION:gcp-us-central1}
+    base_url: '${TURBOPUFFER_BASE_URL:}'
+    namespace: ${TURBOPUFFER_NAMESPACE:wikipedia-en-live}
+    schema:
+      title:
+        type: string
+        full_text_search: true
+        filterable: false
+      text:
+        type: string
+        full_text_search: true
+        filterable: false
+      url:
+        type: string
+        filterable: false
+      revision_id:
+        type: int
+      updated_at:
+        type: datetime
+    max_in_flight: 8
+    batching:
+      count: 200
+      byte_size: 8388608
+      period: 1s
+
+logger:
+  level: INFO
+  format: logfmt
+  add_timestamp: true

@@ -1,0 +1,91 @@
+http:
+  address: 0.0.0.0:${PORT:4195}
+
+input:
+  http_client:
+    url: ${WIKIMEDIA_STREAM_URL:https://stream.wikimedia.org/v2/stream/recentchange}
+    verb: GET
+    headers:
+      Accept: text/event-stream
+      User-Agent: ${WIKIMEDIA_USER_AGENT}
+    timeout: 0s
+    stream:
+      enabled: true
+      reconnect: true
+      scanner:
+        lines:
+          custom_delimiter: "\n"
+          max_buffer_size: 1048576
+          omit_empty: true
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if content().string().has_prefix("data:") {
+          content().string().trim_prefix("data:").trim().parse_json()
+        } else {
+          deleted()
+        }
+    - mapping: |
+        root = if this.wiki == "enwiki" &&
+          this.namespace == 0 &&
+          ["edit", "new"].contains(this.type) &&
+          this.revision.new != null {
+          this
+        } else {
+          deleted()
+        }
+        meta wikipedia_title = this.title
+    - branch:
+        request_map: 'root = ""'
+        processors:
+          - http:
+              url: '${WIKIPEDIA_API_BASE:https://en.wikipedia.org/w/rest.php/v1}/page/${! @wikipedia_title.escape_url_path() }/with_html'
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: ${WIKIMEDIA_USER_AGENT}
+              timeout: 30s
+              retries: 5
+              backoff_on: [429]
+              parallel: true
+        result_map: root = this
+    - mapping: |
+        root.id = this.id.string()
+        root.title = this.title
+        root.text = this.html.html_to_text()
+        root.url = "https://en.wikipedia.org/wiki/" + this.key.escape_url_path()
+        root.revision_id = this.latest.id
+        root.updated_at = this.latest.timestamp
+
+output:
+  turbopuffer:
+    api_key: ${TURBOPUFFER_API_KEY}
+    region: ${TURBOPUFFER_REGION:gcp-us-central1}
+    base_url: '${TURBOPUFFER_BASE_URL:}'
+    namespace: ${TURBOPUFFER_NAMESPACE:wikipedia-en-live}
+    schema:
+      title:
+        type: string
+        full_text_search: true
+        filterable: false
+      text:
+        type: string
+        full_text_search: true
+        filterable: false
+      url:
+        type: string
+        filterable: false
+      revision_id:
+        type: int
+      updated_at:
+        type: datetime
+    max_in_flight: 4
+    batching:
+      count: 100
+      period: 1s
+
+logger:
+  level: INFO
+  format: logfmt
+  add_timestamp: true
