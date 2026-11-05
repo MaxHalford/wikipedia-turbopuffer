@@ -441,10 +441,11 @@ func readCatchupWatermark(ctx context.Context, config *catchupConfig) (string, e
 	if len(response.Rows) != 1 || response.Rows[0].Watermark == "" {
 		return "", errors.New("catchup watermark is missing")
 	}
-	if _, err := time.Parse(time.RFC3339, response.Rows[0].Watermark); err != nil {
+	watermark, err := time.Parse(time.RFC3339, response.Rows[0].Watermark)
+	if err != nil {
 		return "", fmt.Errorf("invalid catchup watermark: %w", err)
 	}
-	return response.Rows[0].Watermark, nil
+	return watermark.UTC().Format(time.RFC3339), nil
 }
 
 func writeCatchupWatermark(ctx context.Context, config *catchupConfig, watermark string) error {

@@ -340,7 +340,7 @@ func TestCatchupWatermarkRoundTrip(t *testing.T) {
 			require.Equal(t, "Bearer tpuf_query", request.Header.Get("Authorization"))
 			require.Equal(t, []any{"id", "Eq", catchupWatermarkID}, body["filters"])
 			writer.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprint(writer, `{"rows":[{"id":"__wikipedia_catchup_watermark__","sync_watermark":"2026-11-04T10:05:00Z"}]}`)
+			_, _ = fmt.Fprint(writer, `{"rows":[{"id":"__wikipedia_catchup_watermark__","sync_watermark":"2026-11-04T10:05:00.000000000Z"}]}`)
 			return
 		}
 		require.Equal(t, "/v2/namespaces/wikipedia-test", request.URL.Path)
