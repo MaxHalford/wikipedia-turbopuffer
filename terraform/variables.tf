@@ -98,6 +98,12 @@ variable "wikipedia_catchup_start" {
   default     = "2026-11-01T00:00:00Z"
 }
 
+variable "wikipedia_catchup_interval" {
+  description = "The interval between reconciliation passes in the live ingester."
+  type        = string
+  default     = "15m"
+}
+
 variable "turbopuffer_region" {
   description = "The turbopuffer region for the Wikipedia namespace."
   type        = string
