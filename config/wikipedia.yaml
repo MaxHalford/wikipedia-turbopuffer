@@ -19,7 +19,7 @@ input:
           omit_empty: true
 
 pipeline:
-  threads: 8
+  threads: 16
   processors:
     - mapping: |
         root = if content().string().has_prefix("data:") {
@@ -108,7 +108,7 @@ output:
         type: datetime
       source_event_at:
         type: datetime
-    max_in_flight: 8
+    max_in_flight: 16
     newer_than: revision_id
     batching:
       count: 100
