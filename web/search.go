@@ -51,9 +51,10 @@ type SearchResponse struct {
 type SearchMode string
 
 const (
-	SearchModeHybrid   SearchMode = "hybrid"
-	SearchModeKeyword  SearchMode = "keyword"
-	SearchModeSemantic SearchMode = "semantic"
+	SearchModeHybrid            SearchMode = "hybrid"
+	SearchModeKeyword           SearchMode = "keyword"
+	SearchModeSemantic          SearchMode = "semantic"
+	wikipediaCatchupWatermarkID            = "__wikipedia_catchup_watermark__"
 )
 
 func NewSearchClient(apiKey, region, baseURL, namespace string) (*SearchClient, error) {
@@ -331,6 +332,9 @@ func (c *SearchClient) query(ctx context.Context, payload map[string]any) ([]Res
 	}
 	results := make([]Result, 0, len(rows))
 	for _, row := range rows {
+		if fmt.Sprint(row.ID) == wikipediaCatchupWatermarkID {
+			continue
+		}
 		excerpt, excerptHTML := "", template.HTML("")
 		if len(row.Excerpt) > 0 {
 			excerpt = strings.Join(strings.Fields(row.Excerpt[0].Text), " ")

@@ -21,7 +21,7 @@ func TestSearchClient(t *testing.T) {
 		requests <- body
 		writer.Header().Set("Content-Type", "application/json")
 		if _, ok := body["queries"]; ok {
-			_, _ = writer.Write([]byte(`{"results":[{"rows":[{"id":"42","title":"Pufferfish","url":"https://en.wikipedia.org/wiki/Pufferfish","updated_at":"2026-11-04T10:00:00Z","$dist":1.25,"excerpt":[{"text":"Pufferfish are toxic fish.","fragment_range":[120,140],"match_ranges":[[120,130]]}]}]}]}`))
+			_, _ = writer.Write([]byte(`{"results":[{"rows":[{"id":"42","title":"Pufferfish","url":"https://en.wikipedia.org/wiki/Pufferfish","updated_at":"2026-11-04T10:00:00Z","$dist":1.25,"excerpt":[{"text":"Pufferfish are toxic fish.","fragment_range":[120,140],"match_ranges":[[120,130]]}]},{"id":"__wikipedia_catchup_watermark__"}]}]}`))
 			return
 		}
 		_, _ = writer.Write([]byte(`{"rows":[{"id":"42","title":"Pufferfish","url":"https://en.wikipedia.org/wiki/Pufferfish","updated_at":"2026-11-04T10:00:00Z","$dist":1.25,"excerpt":[{"text":"Pufferfish are toxic fish.","fragment_range":[120,140],"match_ranges":[[120,130]]}]}]}`))
@@ -169,12 +169,12 @@ func TestSearchClientStats(t *testing.T) {
 			for index := range 19 {
 				rows[index] = map[string]string{
 					"source_event_at": ingestedAt.Add(-time.Duration(index+1) * time.Second).Format(time.RFC3339),
-					"ingested_at":    ingestedAt.Format(time.RFC3339),
+					"ingested_at":     ingestedAt.Format(time.RFC3339),
 				}
 			}
 			rows[19] = map[string]string{
 				"source_event_at": ingestedAt.Add(-100 * time.Second).Format(time.RFC3339),
-				"ingested_at":    ingestedAt.Format(time.RFC3339),
+				"ingested_at":     ingestedAt.Format(time.RFC3339),
 			}
 			require.NoError(t, json.NewEncoder(writer).Encode(map[string]any{"rows": rows}))
 		default:

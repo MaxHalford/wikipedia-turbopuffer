@@ -432,7 +432,7 @@ func readCatchupWatermark(ctx context.Context, config *catchupConfig) (string, e
 			Watermark string `json:"sync_watermark"`
 		} `json:"rows"`
 	}
-	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace+"-metadata") + "/query"
+	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace) + "/query"
 	if err := retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, &response); err != nil {
 		return "", err
 	}
@@ -452,14 +452,18 @@ func writeCatchupWatermark(ctx context.Context, config *catchupConfig, watermark
 		},
 		"upsert_condition": []any{"sync_watermark", "Lt", map[string]any{"$ref_new": "sync_watermark"}},
 		"upsert_rows": []any{
-			map[string]any{"id": catchupWatermarkID, "sync_watermark": watermark},
+			map[string]any{
+				"embedding_text": "Internal synchronization watermark",
+				"id":             catchupWatermarkID,
+				"sync_watermark": watermark,
+			},
 		},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace+"-metadata")
+	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace)
 	return retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, nil)
 }
 

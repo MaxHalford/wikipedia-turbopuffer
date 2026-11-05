@@ -336,13 +336,13 @@ func TestCatchupWatermarkRoundTrip(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var body map[string]any
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
-		if request.URL.Path == "/v2/namespaces/wikipedia-test-metadata/query" {
+		if request.URL.Path == "/v2/namespaces/wikipedia-test/query" {
 			require.Equal(t, []any{"id", "Eq", catchupWatermarkID}, body["filters"])
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(writer, `{"rows":[{"id":"__wikipedia_catchup_watermark__","sync_watermark":"2026-11-04T10:05:00Z"}]}`)
 			return
 		}
-		require.Equal(t, "/v2/namespaces/wikipedia-test-metadata", request.URL.Path)
+		require.Equal(t, "/v2/namespaces/wikipedia-test", request.URL.Path)
 		writes <- body
 		writer.WriteHeader(http.StatusOK)
 	}))
@@ -360,6 +360,8 @@ func TestCatchupWatermarkRoundTrip(t *testing.T) {
 		[]any{"sync_watermark", "Lt", map[string]any{"$ref_new": "sync_watermark"}},
 		write["upsert_condition"],
 	)
+	row := write["upsert_rows"].([]any)[0].(map[string]any)
+	require.Equal(t, "Internal synchronization watermark", row["embedding_text"])
 
 	watermark, err := readCatchupWatermark(t.Context(), config)
 	require.NoError(t, err)
