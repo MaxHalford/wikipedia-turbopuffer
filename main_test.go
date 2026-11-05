@@ -337,19 +337,22 @@ func TestCatchupWatermarkRoundTrip(t *testing.T) {
 		var body map[string]any
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
 		if request.URL.Path == "/v2/namespaces/wikipedia-test/query" {
+			require.Equal(t, "Bearer tpuf_query", request.Header.Get("Authorization"))
 			require.Equal(t, []any{"id", "Eq", catchupWatermarkID}, body["filters"])
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(writer, `{"rows":[{"id":"__wikipedia_catchup_watermark__","sync_watermark":"2026-11-04T10:05:00Z"}]}`)
 			return
 		}
 		require.Equal(t, "/v2/namespaces/wikipedia-test", request.URL.Path)
+		require.Equal(t, "Bearer tpuf_write", request.Header.Get("Authorization"))
 		writes <- body
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
 	config := &catchupConfig{
-		apiKey:      "tpuf_test",
+		apiKey:      "tpuf_write",
+		queryAPIKey: "tpuf_query",
 		baseURL:     server.URL,
 		namespace:   "wikipedia-test",
 		writeClient: server.Client(),

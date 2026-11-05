@@ -10,6 +10,10 @@ data "google_secret_manager_secret" "job_write_api_key" {
   secret_id = var.job_write_api_key_secret
 }
 
+data "google_secret_manager_secret" "job_query_api_key" {
+  secret_id = var.job_query_api_key_secret
+}
+
 locals {
   job_image = coalesce(var.job_image, var.ingester_image)
 }
@@ -38,6 +42,18 @@ resource "google_secret_manager_secret_iam_member" "ingester_write_api_key" {
 
 resource "google_secret_manager_secret_iam_member" "ingester_job_write_api_key" {
   secret_id = data.google_secret_manager_secret.job_write_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ingester.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "ingester_query_api_key" {
+  secret_id = data.google_secret_manager_secret.query_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ingester.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "ingester_job_query_api_key" {
+  secret_id = data.google_secret_manager_secret.job_query_api_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.ingester.email}"
 }
@@ -188,6 +204,16 @@ resource "google_cloud_run_v2_service" "ingester" {
         }
       }
 
+      env {
+        name = "TURBOPUFFER_QUERY_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = data.google_secret_manager_secret.query_api_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+
       startup_probe {
         initial_delay_seconds = 0
         timeout_seconds       = 2
@@ -201,7 +227,10 @@ resource "google_cloud_run_v2_service" "ingester" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.ingester_write_api_key]
+  depends_on = [
+    google_secret_manager_secret_iam_member.ingester_query_api_key,
+    google_secret_manager_secret_iam_member.ingester_write_api_key,
+  ]
 
   lifecycle {
     ignore_changes = [scaling]
@@ -328,9 +357,22 @@ resource "google_cloud_run_v2_job" "catchup" {
             }
           }
         }
+
+        env {
+          name = "TURBOPUFFER_QUERY_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.job_query_api_key.secret_id
+              version = "latest"
+            }
+          }
+        }
       }
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.ingester_job_write_api_key]
+  depends_on = [
+    google_secret_manager_secret_iam_member.ingester_job_query_api_key,
+    google_secret_manager_secret_iam_member.ingester_job_write_api_key,
+  ]
 }

@@ -121,6 +121,7 @@ terraform -chdir=terraform apply \
   -var='web_image=REGISTRY/wikipedia-web:COMMIT' \
   -var='ingester_image=REGISTRY/wikipedia-ingester:COMMIT' \
   -var='job_image=REGISTRY/wikipedia-ingester:COMMIT' \
+  -var='job_query_api_key_secret=YOUR_BACKFILL_QUERY_SECRET' \
   -var='job_write_api_key_secret=YOUR_BACKFILL_WRITE_SECRET' \
   -var='turbopuffer_backfill_namespace=YOUR_HYBRID_NAMESPACE' \
   -var='wikimedia_user_agent=wikipedia-turbopuffer/0.1 (mailto:you@example.com)'

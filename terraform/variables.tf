@@ -44,6 +44,12 @@ variable "job_write_api_key_secret" {
   default     = "wikipedia-turbopuffer-write-api-key"
 }
 
+variable "job_query_api_key_secret" {
+  description = "The Secret Manager query-key secret used by the catch-up job."
+  type        = string
+  default     = "wikipedia-turbopuffer-query-api-key"
+}
+
 variable "turbopuffer_namespace" {
   description = "The turbopuffer namespace queried by the web service."
   type        = string

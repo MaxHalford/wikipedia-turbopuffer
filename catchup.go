@@ -50,6 +50,7 @@ func (gate *requestGate) Wait(ctx context.Context) error {
 
 type catchupConfig struct {
 	apiKey      string
+	queryAPIKey string
 	apiURL      string
 	baseURL     string
 	namespace   string
@@ -185,6 +186,7 @@ func catchupConfigFromEnv() (*catchupConfig, error) {
 		writeClient: &http.Client{Timeout: time.Minute},
 		requestGate: &requestGate{interval: wikipediaRequestInterval},
 	}
+	config.queryAPIKey = getenv("TURBOPUFFER_QUERY_API_KEY", config.apiKey)
 	if config.baseURL == "" {
 		region := getenv("TURBOPUFFER_REGION", "gcp-us-central1")
 		config.baseURL = "https://" + region + ".turbopuffer.com"
@@ -433,7 +435,7 @@ func readCatchupWatermark(ctx context.Context, config *catchupConfig) (string, e
 		} `json:"rows"`
 	}
 	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace) + "/query"
-	if err := retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, &response); err != nil {
+	if err := retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.queryAPIKey, body, &response); err != nil {
 		return "", err
 	}
 	if len(response.Rows) != 1 || response.Rows[0].Watermark == "" {
