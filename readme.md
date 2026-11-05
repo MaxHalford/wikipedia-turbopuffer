@@ -86,11 +86,11 @@ TURBOPUFFER_API_KEY="$TURBOPUFFER_API_WRITE_KEY" \
   go run . wikipedia-catchup
 ```
 
-The reconciliation reads MediaWiki recent changes, fetches the current Cirrus
-documents in batches, and repairs edited, moved, and deleted pages. The live
-service runs the same reconciliation every five minutes. It stores the end of
-each completed window in turbopuffer, so a restart resumes from the last
-committed watermark and a failed run repeats its window.
+The live pipeline batches recent-change events and fetches their current Cirrus
+documents in one request. Reconciliation repairs edits, moves, and deletes that
+occurred while the live pipeline was unavailable. It stores the end of each
+completed window in turbopuffer, so a restart resumes from the last committed
+watermark and a failed run repeats its window.
 
 ## Deploy to Cloud Run
 
@@ -159,7 +159,7 @@ TURBOPUFFER_API_KEY=tpuf_test \
   go run . lint config/wikipedia-backfill.yaml
 ```
 
-The end-to-end test runs the event stream, page fetch, HTML conversion, and
+The end-to-end test runs the event stream, batched Cirrus hydration, and
 turbopuffer write against local HTTP servers.
 
 ## Limits

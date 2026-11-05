@@ -60,30 +60,22 @@ func TestWikipediaPipeline(t *testing.T) {
 			return
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"canary\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Canary\",\"revision\":{\"new\":11}}\n\n")
-		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:00Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Missing Article\",\"revision\":{\"new\":11}}\n\n")
-		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:01Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
-		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:02Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"canary\"},\"namespace\":0,\"type\":\"edit\",\"page_id\":1,\"title\":\"Canary\",\"revision\":{\"new\":11}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:00Z\"},\"namespace\":0,\"type\":\"edit\",\"page_id\":999,\"title\":\"Missing Article\",\"revision\":{\"new\":11}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:01Z\"},\"namespace\":0,\"type\":\"edit\",\"page_id\":11250397,\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:02Z\"},\"namespace\":0,\"type\":\"edit\",\"page_id\":11250397,\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
 		writer.(http.Flusher).Flush()
 	}))
 	defer streamServer.Close()
 
-	var canaryRequests atomic.Int32
-	var missingRequests atomic.Int32
-	var validRequests atomic.Int32
+	var hydrationRequests atomic.Int32
 	pageServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.EscapedPath() == "/page/Canary/with_html" {
-			canaryRequests.Add(1)
-		}
-		if request.URL.EscapedPath() == "/page/Missing%20Article/with_html" {
-			missingRequests.Add(1)
-			http.NotFound(writer, request)
-			return
-		}
-		require.Equal(t, "/page/Test%20Article/with_html", request.URL.EscapedPath())
-		validRequests.Add(1)
+		hydrationRequests.Add(1)
+		require.Equal(t, "/w/api.php", request.URL.Path)
+		require.Equal(t, "999|11250397", request.URL.Query().Get("pageids"))
+		require.Equal(t, "turbopuffer-test/0.1 (test@example.com)", request.Header.Get("User-Agent"))
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(writer, `{"id":11250397,"key":"Test_Article","title":"Test Article","latest":{"id":12,"timestamp":"2026-11-04T10:00:00Z"},"html":"<h1>Test Article</h1><section data-mw-section-id=\"0\"><p>Hello <strong>world</strong>.</p></section><section data-mw-section-id=\"1\"><p>Body copy.</p></section>"}`)
+		_, _ = fmt.Fprint(writer, `{"query":{"pages":[{"pageid":999,"ns":0,"missing":true},{"pageid":11250397,"ns":0,"cirrusdoc":[{"source":{"page_id":11250397,"namespace":0,"page_type":"primary","title":"Test Article","opening_text":"Hello world.","text":"Test Article Hello world. Body copy.","version":12,"timestamp":"2026-11-04T10:00:00Z"}}]}]}}`)
 	}))
 	defer pageServer.Close()
 
@@ -103,7 +95,7 @@ func TestWikipediaPipeline(t *testing.T) {
 	defer turbopufferServer.Close()
 
 	t.Setenv("WIKIMEDIA_STREAM_URL", streamServer.URL)
-	t.Setenv("WIKIPEDIA_API_BASE", pageServer.URL)
+	t.Setenv("WIKIPEDIA_ACTION_API", pageServer.URL+"/w/api.php")
 	t.Setenv("WIKIMEDIA_USER_AGENT", "turbopuffer-test/0.1 (test@example.com)")
 	t.Setenv("TURBOPUFFER_API_KEY", "tpuf_test")
 	t.Setenv("TURBOPUFFER_BASE_URL", turbopufferServer.URL)
@@ -163,9 +155,7 @@ func TestWikipediaPipeline(t *testing.T) {
 				"dtype": "f16",
 			},
 		}, schema["embedding_text"])
-		require.Zero(t, canaryRequests.Load())
-		require.Equal(t, int32(1), missingRequests.Load())
-		require.Equal(t, int32(1), validRequests.Load())
+		require.Equal(t, int32(1), hydrationRequests.Load())
 		require.Never(t, func() bool { return writeRequests.Load() > 1 }, 2*time.Second, 20*time.Millisecond)
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the Wikipedia pipeline")
