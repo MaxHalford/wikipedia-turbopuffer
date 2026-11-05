@@ -63,12 +63,14 @@ func TestWikipediaPipeline(t *testing.T) {
 		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"canary\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Canary\",\"revision\":{\"new\":11}}\n\n")
 		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:00Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Missing Article\",\"revision\":{\"new\":11}}\n\n")
 		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:01Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:02Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
 		writer.(http.Flusher).Flush()
 	}))
 	defer streamServer.Close()
 
 	var canaryRequests atomic.Int32
 	var missingRequests atomic.Int32
+	var validRequests atomic.Int32
 	pageServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.EscapedPath() == "/page/Canary/with_html" {
 			canaryRequests.Add(1)
@@ -79,13 +81,16 @@ func TestWikipediaPipeline(t *testing.T) {
 			return
 		}
 		require.Equal(t, "/page/Test%20Article/with_html", request.URL.EscapedPath())
+		validRequests.Add(1)
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(writer, `{"id":11250397,"key":"Test_Article","title":"Test Article","latest":{"id":12,"timestamp":"2026-11-04T10:00:00Z"},"html":"<h1>Test Article</h1><section data-mw-section-id=\"0\"><p>Hello <strong>world</strong>.</p></section><section data-mw-section-id=\"1\"><p>Body copy.</p></section>"}`)
 	}))
 	defer pageServer.Close()
 
 	writes := make(chan map[string]any, 1)
+	var writeRequests atomic.Int32
 	turbopufferServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writeRequests.Add(1)
 		require.Equal(t, "/v2/namespaces/wikipedia-test", request.URL.Path)
 		var body map[string]any
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
@@ -159,6 +164,8 @@ func TestWikipediaPipeline(t *testing.T) {
 		}, schema["embedding_text"])
 		require.Zero(t, canaryRequests.Load())
 		require.Equal(t, int32(1), missingRequests.Load())
+		require.Eventually(t, func() bool { return validRequests.Load() == 2 }, 2*time.Second, 10*time.Millisecond)
+		require.Never(t, func() bool { return writeRequests.Load() > 1 }, 2*time.Second, 20*time.Millisecond)
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the Wikipedia pipeline")
 	}

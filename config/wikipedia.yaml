@@ -73,6 +73,9 @@ pipeline:
         root.updated_at = this.latest.timestamp
         root.source_event_at = @wikipedia_event_at
         root.ingested_at = now().ts_format("2006-01-02T15:04:05.999999999Z07:00")
+    - dedupe:
+        cache: wikipedia_revisions
+        key: '${! json("id") }-${! json("revision_id") }'
 
 output:
   turbopuffer:
@@ -118,3 +121,9 @@ logger:
   level: INFO
   format: logfmt
   add_timestamp: true
+
+cache_resources:
+  - label: wikipedia_revisions
+    memory:
+      default_ttl: 24h
+      shards: 16
