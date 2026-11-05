@@ -53,18 +53,30 @@ func TestDownloadWikipediaDumpResumesPartialResponse(t *testing.T) {
 }
 
 func TestWikipediaPipeline(t *testing.T) {
-	streamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	var streamRequests atomic.Int32
+	streamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if streamRequests.Add(1) > 1 {
+			writer.WriteHeader(http.StatusNoContent)
+			return
+		}
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"canary\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Canary\",\"revision\":{\"new\":11}}\n\n")
+		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:00Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Missing Article\",\"revision\":{\"new\":11}}\n\n")
 		_, _ = fmt.Fprint(writer, "data: {\"wiki\":\"enwiki\",\"meta\":{\"domain\":\"en.wikipedia.org\",\"dt\":\"2026-11-04T10:00:01Z\"},\"namespace\":0,\"type\":\"edit\",\"title\":\"Test Article\",\"revision\":{\"new\":12}}\n\n")
 		writer.(http.Flusher).Flush()
 	}))
 	defer streamServer.Close()
 
 	var canaryRequests atomic.Int32
+	var missingRequests atomic.Int32
 	pageServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.EscapedPath() == "/page/Canary/with_html" {
 			canaryRequests.Add(1)
+		}
+		if request.URL.EscapedPath() == "/page/Missing%20Article/with_html" {
+			missingRequests.Add(1)
+			http.NotFound(writer, request)
+			return
 		}
 		require.Equal(t, "/page/Test%20Article/with_html", request.URL.EscapedPath())
 		writer.Header().Set("Content-Type", "application/json")
@@ -146,6 +158,7 @@ func TestWikipediaPipeline(t *testing.T) {
 			},
 		}, schema["embedding_text"])
 		require.Zero(t, canaryRequests.Load())
+		require.Equal(t, int32(1), missingRequests.Load())
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the Wikipedia pipeline")
 	}

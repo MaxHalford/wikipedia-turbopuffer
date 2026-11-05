@@ -36,6 +36,7 @@ pipeline:
         } else {
           deleted()
         }
+    - mapping: |
         meta wikipedia_title = this.title
         meta wikipedia_event_at = this.meta.dt
     - branch:
@@ -49,9 +50,12 @@ pipeline:
                 User-Agent: ${WIKIMEDIA_USER_AGENT}
               timeout: 30s
               retries: 5
+              drop_on: [404]
               backoff_on: [429]
               parallel: true
         result_map: root = this
+    - catch:
+        - mapping: root = deleted()
     - mapping: |
         let page_text = this.html.html_to_text().trim()
         let lead_text = this.html.html_lead_to_text().trim()
