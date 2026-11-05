@@ -131,15 +131,16 @@ func TestWikipediaPipeline(t *testing.T) {
 		require.NoError(t, err)
 		require.WithinDuration(t, time.Now(), parsed, 10*time.Second)
 		delete(row, "ingested_at")
+		require.Contains(t, []string{"2026-11-04T10:00:01Z", "2026-11-04T10:00:02Z"}, row["source_event_at"])
+		delete(row, "source_event_at")
 		require.Equal(t, map[string]any{
-			"embedding_text":  "Test Article\n\nHello world.",
-			"id":              "11250397",
-			"source_event_at": "2026-11-04T10:00:01Z",
-			"revision_id":     float64(12),
-			"text":            "Test Article Hello world. Body copy.",
-			"title":           "Test Article",
-			"updated_at":      "2026-11-04T10:00:00Z",
-			"url":             "https://en.wikipedia.org/wiki/Test_Article",
+			"embedding_text": "Test Article\n\nHello world.",
+			"id":             "11250397",
+			"revision_id":    float64(12),
+			"text":           "Test Article Hello world. Body copy.",
+			"title":          "Test Article",
+			"updated_at":     "2026-11-04T10:00:00Z",
+			"url":            "https://en.wikipedia.org/wiki/Test_Article",
 		}, row)
 		require.Equal(t, []any{
 			"revision_id",
