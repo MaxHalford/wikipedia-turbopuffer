@@ -115,7 +115,7 @@ output:
     newer_than: revision_id
     batching:
       count: 100
-      period: 1s
+      period: 5s
 
 logger:
   level: INFO

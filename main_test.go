@@ -129,7 +129,7 @@ func TestWikipediaPipeline(t *testing.T) {
 		require.True(t, ok)
 		parsed, err := time.Parse(time.RFC3339Nano, ingestedAt)
 		require.NoError(t, err)
-		require.WithinDuration(t, time.Now(), parsed, 5*time.Second)
+		require.WithinDuration(t, time.Now(), parsed, 10*time.Second)
 		delete(row, "ingested_at")
 		require.Equal(t, map[string]any{
 			"embedding_text":  "Test Article\n\nHello world.",
