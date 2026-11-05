@@ -19,6 +19,7 @@ input:
           omit_empty: true
 
 pipeline:
+  threads: 4
   processors:
     - mapping: |
         root = if content().string().has_prefix("data:") {
