@@ -33,7 +33,7 @@ TURBOPUFFER_REGION=gcp-us-central1
 TURBOPUFFER_NAMESPACE=wikipedia-en-live
 WIKIMEDIA_USER_AGENT=wikipedia-turbopuffer/0.1 (mailto:you@example.com)
 WIKIPEDIA_CATCHUP_START=2026-11-01T00:00:00Z
-WIKIPEDIA_CATCHUP_INTERVAL=5m
+WIKIPEDIA_CATCHUP_INTERVAL=15m
 ```
 
 Start the live ingester:
@@ -91,6 +91,10 @@ documents in one request. Reconciliation repairs edits, moves, and deletes that
 occurred while the live pipeline was unavailable. It stores the end of each
 completed window in turbopuffer, so a restart resumes from the last committed
 watermark and a failed run repeats its window.
+
+The live ingester runs reconciliation after startup and then 15 minutes after
+each completed pass. This schedule keeps the index converged without overlapping
+reconciliation runs. Terraform enables the schedule by default.
 
 ## Deploy to Cloud Run
 

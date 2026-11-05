@@ -190,6 +190,11 @@ resource "google_cloud_run_v2_service" "ingester" {
       }
 
       env {
+        name  = "WIKIPEDIA_CATCHUP_INTERVAL"
+        value = var.wikipedia_catchup_interval
+      }
+
+      env {
         name = "TURBOPUFFER_API_KEY"
         value_source {
           secret_key_ref {
