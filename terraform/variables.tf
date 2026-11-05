@@ -98,12 +98,6 @@ variable "wikipedia_catchup_start" {
   default     = "2026-11-01T00:00:00Z"
 }
 
-variable "wikipedia_catchup_interval" {
-  description = "How often the live ingester reconciles recent changes."
-  type        = string
-  default     = "5m"
-}
-
 variable "turbopuffer_region" {
   description = "The turbopuffer region for the Wikipedia namespace."
   type        = string
