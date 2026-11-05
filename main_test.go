@@ -165,7 +165,7 @@ func TestWikipediaPipeline(t *testing.T) {
 		}, schema["embedding_text"])
 		require.Zero(t, canaryRequests.Load())
 		require.Equal(t, int32(1), missingRequests.Load())
-		require.Eventually(t, func() bool { return validRequests.Load() == 2 }, 2*time.Second, 10*time.Millisecond)
+		require.Equal(t, int32(1), validRequests.Load())
 		require.Never(t, func() bool { return writeRequests.Load() > 1 }, 2*time.Second, 20*time.Millisecond)
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the Wikipedia pipeline")

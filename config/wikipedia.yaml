@@ -40,6 +40,9 @@ pipeline:
     - mapping: |
         meta wikipedia_title = this.title
         meta wikipedia_event_at = this.meta.dt
+    - dedupe:
+        cache: wikipedia_events
+        key: '${! json("title") }-${! json("revision.new") }'
     - branch:
         request_map: 'root = ""'
         processors:
@@ -123,6 +126,10 @@ logger:
   add_timestamp: true
 
 cache_resources:
+  - label: wikipedia_events
+    memory:
+      default_ttl: 24h
+      shards: 16
   - label: wikipedia_revisions
     memory:
       default_ttl: 24h
