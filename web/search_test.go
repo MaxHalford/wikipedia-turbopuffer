@@ -164,12 +164,19 @@ func TestSearchClientStats(t *testing.T) {
 				_, _ = writer.Write([]byte(`{"rows":[]}`))
 				return
 			}
-			_, _ = writer.Write([]byte(`{"rows":[
-				{"source_event_at":"2026-11-04T16:29:55Z","ingested_at":"2026-11-04T16:29:56Z"},
-				{"source_event_at":"2026-11-04T16:29:54Z","ingested_at":"2026-11-04T16:29:56Z"},
-				{"source_event_at":"2026-11-04T16:29:53Z","ingested_at":"2026-11-04T16:29:56Z"},
-				{"source_event_at":"2026-11-04T16:29:52Z","ingested_at":"2026-11-04T16:29:56Z"}
-			]}`))
+			rows := make([]map[string]string, 20)
+			ingestedAt := time.Date(2026, 11, 4, 16, 29, 56, 0, time.UTC)
+			for index := range 19 {
+				rows[index] = map[string]string{
+					"source_event_at": ingestedAt.Add(-time.Duration(index+1) * time.Second).Format(time.RFC3339),
+					"ingested_at":    ingestedAt.Format(time.RFC3339),
+				}
+			}
+			rows[19] = map[string]string{
+				"source_event_at": ingestedAt.Add(-100 * time.Second).Format(time.RFC3339),
+				"ingested_at":    ingestedAt.Format(time.RFC3339),
+			}
+			require.NoError(t, json.NewEncoder(writer).Encode(map[string]any{"rows": rows}))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -186,8 +193,8 @@ func TestSearchClientStats(t *testing.T) {
 		IndexStatus:         "up-to-date",
 		LastWriteAt:         "2026-11-04T16:29:52Z",
 		LiveIngestLagMS:     4000,
-		P99IngestLatencyMS:  4000,
-		LatencySampleCount:  4,
+		P95IngestLatencyMS:  19000,
+		LatencySampleCount:  20,
 	}, stats)
 
 	emptyLatency = true
@@ -195,7 +202,7 @@ func TestSearchClientStats(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(-1), stats.LiveIngestLagMS)
 	require.Zero(t, stats.LatencySampleCount)
-	require.Zero(t, stats.P99IngestLatencyMS)
+	require.Zero(t, stats.P95IngestLatencyMS)
 }
 
 func TestNewSearchClientValidation(t *testing.T) {

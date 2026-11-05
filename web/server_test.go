@@ -58,7 +58,7 @@ func TestServerSearchAPIAndPage(t *testing.T) {
 	require.Contains(t, response.Body.String(), `id="stat-freshness"`)
 	require.Contains(t, response.Body.String(), "page changes")
 	require.Equal(t, 1, strings.Count(response.Body.String(), "last 1h"))
-	require.Contains(t, response.Body.String(), "p99 ingestion")
+	require.Contains(t, response.Body.String(), "p95 ingestion")
 	require.Contains(t, response.Body.String(), "live ingestion stalled")
 	require.Contains(t, response.Body.String(), `input[type="search"]::-webkit-search-cancel-button`)
 	require.Contains(t, response.Body.String(), `.freshness-health:hover:after`)
@@ -120,7 +120,7 @@ func TestServerStatsAPI(t *testing.T) {
 		PagesEditedLastHour: 1500,
 		IndexStatus:         "up-to-date",
 		LastWriteAt:         "2026-11-04T16:29:52Z",
-		P99IngestLatencyMS:  2000,
+		P95IngestLatencyMS:  2000,
 		LatencySampleCount:  1,
 	}, stats)
 }

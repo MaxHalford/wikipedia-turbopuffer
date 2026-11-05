@@ -29,7 +29,7 @@ type Stats struct {
 	IndexStatus         string `json:"index_status"`
 	LastWriteAt         string `json:"last_write_at"`
 	LiveIngestLagMS     int64  `json:"live_ingest_lag_ms"`
-	P99IngestLatencyMS  int64  `json:"p99_ingest_latency_ms"`
+	P95IngestLatencyMS  int64  `json:"p95_ingest_latency_ms"`
 	LatencySampleCount  int    `json:"latency_sample_count"`
 }
 
@@ -198,10 +198,10 @@ func (c *SearchClient) Stats(ctx context.Context, now time.Time) (Stats, error) 
 		latencies = append(latencies, ingestedAt.Sub(sourceEventAt).Milliseconds())
 	}
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
-	p99Latency := int64(0)
+	p95Latency := int64(0)
 	if len(latencies) > 0 {
-		rank := (99*len(latencies) + 99) / 100
-		p99Latency = latencies[rank-1]
+		rank := (95*len(latencies) + 99) / 100
+		p95Latency = latencies[rank-1]
 	}
 	liveIngestLag := int64(-1)
 	if !lastLiveIngest.IsZero() {
@@ -213,7 +213,7 @@ func (c *SearchClient) Stats(ctx context.Context, now time.Time) (Stats, error) 
 		IndexStatus:         metadata.Index.Status,
 		LastWriteAt:         metadata.LastWriteAt,
 		LiveIngestLagMS:     liveIngestLag,
-		P99IngestLatencyMS:  p99Latency,
+		P95IngestLatencyMS:  p95Latency,
 		LatencySampleCount:  len(latencies),
 	}, nil
 }
