@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,9 +16,8 @@ import (
 const wikipediaHydratorBatchSize = 50
 
 type wikipediaEvent struct {
-	PageID uint64 `json:"page_id"`
-	Title  string `json:"title"`
-	Meta   struct {
+	Title string `json:"title"`
+	Meta  struct {
 		Timestamp string `json:"dt"`
 	} `json:"meta"`
 	Revision struct {
@@ -72,7 +70,7 @@ func init() {
 }
 
 func (hydrator *wikipediaHydrator) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	events := make(map[uint64]hydratedEvent, len(batch))
+	events := make(map[string]hydratedEvent, len(batch))
 	for _, message := range batch {
 		contents, err := message.AsBytes()
 		if err != nil {
@@ -82,37 +80,37 @@ func (hydrator *wikipediaHydrator) ProcessBatch(ctx context.Context, batch servi
 		if err := json.Unmarshal(contents, &event); err != nil {
 			return nil, fmt.Errorf("decode Wikipedia event: %w", err)
 		}
-		if event.PageID == 0 || event.Revision.New == 0 || event.Meta.Timestamp == "" {
+		if event.Title == "" || event.Revision.New == 0 || event.Meta.Timestamp == "" {
 			continue
 		}
-		previous, exists := events[event.PageID]
+		key := wikipediaTitleKey(event.Title)
+		previous, exists := events[key]
 		if !exists || event.Revision.New > previous.event.Revision.New {
-			events[event.PageID] = hydratedEvent{event: event, message: message}
+			events[key] = hydratedEvent{event: event, message: message}
 		}
 	}
 	if len(events) == 0 {
 		return nil, nil
 	}
 
-	ids := make([]uint64, 0, len(events))
-	for id := range events {
-		ids = append(ids, id)
+	titles := make([]string, 0, len(events))
+	for _, event := range events {
+		titles = append(titles, event.event.Title)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	sort.Strings(titles)
 
-	result := make(service.MessageBatch, 0, len(ids))
-	for start := 0; start < len(ids); start += wikipediaHydratorBatchSize {
-		end := min(start+wikipediaHydratorBatchSize, len(ids))
-		rows, err := hydrator.fetch(ctx, ids[start:end])
+	result := make(service.MessageBatch, 0, len(titles))
+	for start := 0; start < len(titles); start += wikipediaHydratorBatchSize {
+		end := min(start+wikipediaHydratorBatchSize, len(titles))
+		rows, err := hydrator.fetch(ctx, titles[start:end])
 		if err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
-			id, err := strconv.ParseUint(row["id"].(string), 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("decode hydrated page ID: %w", err)
+			event, exists := events[wikipediaTitleKey(row["title"].(string))]
+			if !exists {
+				continue
 			}
-			event := events[id]
 			row["source_event_at"] = event.event.Meta.Timestamp
 			row["ingested_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 			message := event.message.Copy()
@@ -126,27 +124,35 @@ func (hydrator *wikipediaHydrator) ProcessBatch(ctx context.Context, batch servi
 	return []service.MessageBatch{result}, nil
 }
 
-func (hydrator *wikipediaHydrator) fetch(ctx context.Context, ids []uint64) ([]map[string]any, error) {
-	values := make([]string, len(ids))
-	for index, id := range ids {
-		values[index] = strconv.FormatUint(id, 10)
-	}
+func (hydrator *wikipediaHydrator) fetch(ctx context.Context, titles []string) ([]map[string]any, error) {
 	parameters := url.Values{
 		"action":        {"query"},
 		"cdincludes":    {"page_id|namespace|page_type|title|opening_text|text|version|timestamp"},
 		"format":        {"json"},
 		"formatversion": {"2"},
 		"maxlag":        {"5"},
-		"pageids":       {strings.Join(values, "|")},
 		"prop":          {"cirrusdoc"},
+		"titles":        {strings.Join(titles, "|")},
 	}
 	var response cirrusResponse
 	endpoint := hydrator.apiURL + "?" + parameters.Encode()
 	if err := retryJSON(ctx, hydrator.client, http.MethodGet, endpoint, hydrator.userAgent, "", nil, &response); err != nil {
 		return nil, fmt.Errorf("hydrate Wikipedia pages: %w", err)
 	}
-	rows, _, err := catchupRows(ids, response)
-	return rows, err
+	rows := make([]map[string]any, 0, len(response.Query.Pages))
+	for _, page := range response.Query.Pages {
+		if page.Missing || page.Namespace != 0 || len(page.Documents) == 0 {
+			continue
+		}
+		if row, ok := wikipediaArticleRow(page.Documents[0].Source); ok {
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
+func wikipediaTitleKey(title string) string {
+	return strings.ToLower(strings.ReplaceAll(title, "_", " "))
 }
 
 func (hydrator *wikipediaHydrator) Close(context.Context) error {

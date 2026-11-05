@@ -351,19 +351,8 @@ func catchupRows(requested []uint64, response cirrusResponse) ([]map[string]any,
 			deletes = append(deletes, strconv.FormatUint(page.PageID, 10))
 			continue
 		}
-		text := strings.TrimSpace(source.Text)
-		if text == "" {
-			text = source.Title
-		}
-		upserts = append(upserts, map[string]any{
-			"embedding_text": semanticArticleText(source.Title, source.OpeningText, source.Text),
-			"id":             strconv.FormatUint(source.PageID, 10),
-			"revision_id":    source.Version,
-			"text":           text,
-			"title":          source.Title,
-			"updated_at":     source.Timestamp,
-			"url":            "https://en.wikipedia.org/wiki/" + url.PathEscape(strings.ReplaceAll(source.Title, " ", "_")),
-		})
+		row, _ := wikipediaArticleRow(source)
+		upserts = append(upserts, row)
 	}
 	for _, id := range requested {
 		if _, ok := found[id]; !ok {
@@ -371,6 +360,25 @@ func catchupRows(requested []uint64, response cirrusResponse) ([]map[string]any,
 		}
 	}
 	return upserts, deletes, nil
+}
+
+func wikipediaArticleRow(source cirrusSource) (map[string]any, bool) {
+	if source.Namespace != 0 || source.PageType != "primary" {
+		return nil, false
+	}
+	text := strings.TrimSpace(source.Text)
+	if text == "" {
+		text = source.Title
+	}
+	return map[string]any{
+		"embedding_text": semanticArticleText(source.Title, source.OpeningText, source.Text),
+		"id":             strconv.FormatUint(source.PageID, 10),
+		"revision_id":    source.Version,
+		"text":           text,
+		"title":          source.Title,
+		"updated_at":     source.Timestamp,
+		"url":            "https://en.wikipedia.org/wiki/" + url.PathEscape(strings.ReplaceAll(source.Title, " ", "_")),
+	}, true
 }
 
 func semanticArticleText(title, openingText, text string) string {

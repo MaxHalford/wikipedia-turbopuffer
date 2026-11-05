@@ -72,7 +72,7 @@ func TestWikipediaPipeline(t *testing.T) {
 	pageServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		hydrationRequests.Add(1)
 		require.Equal(t, "/w/api.php", request.URL.Path)
-		require.Equal(t, "999|11250397", request.URL.Query().Get("pageids"))
+		require.Equal(t, "Missing Article|Test Article", request.URL.Query().Get("titles"))
 		require.Equal(t, "turbopuffer-test/0.1 (test@example.com)", request.Header.Get("User-Agent"))
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(writer, `{"query":{"pages":[{"pageid":999,"ns":0,"missing":true},{"pageid":11250397,"ns":0,"cirrusdoc":[{"source":{"page_id":11250397,"namespace":0,"page_type":"primary","title":"Test Article","opening_text":"Hello world.","text":"Test Article Hello world. Body copy.","version":12,"timestamp":"2026-11-04T10:00:00Z"}}]}]}}`)
