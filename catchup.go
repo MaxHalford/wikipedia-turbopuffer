@@ -432,7 +432,7 @@ func readCatchupWatermark(ctx context.Context, config *catchupConfig) (string, e
 			Watermark string `json:"sync_watermark"`
 		} `json:"rows"`
 	}
-	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace) + "/query"
+	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace+"-metadata") + "/query"
 	if err := retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, &response); err != nil {
 		return "", err
 	}
@@ -459,7 +459,7 @@ func writeCatchupWatermark(ctx context.Context, config *catchupConfig, watermark
 	if err != nil {
 		return err
 	}
-	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace)
+	endpoint := strings.TrimRight(config.baseURL, "/") + "/v2/namespaces/" + url.PathEscape(config.namespace+"-metadata")
 	return retryJSON(ctx, config.writeClient, http.MethodPost, endpoint, "", config.apiKey, body, nil)
 }
 
